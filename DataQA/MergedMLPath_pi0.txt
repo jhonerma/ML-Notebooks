@@ -1,0 +1,9 @@
+/media/DATA/ALICE_Train_Output/LegoTrain_3769_20210622-1126/LHC19a1a_2/3/255591/GammaCaloMergedML_1540.root
+/media/DATA/ALICE_Train_Output/LegoTrain_3769_20210622-1126/LHC19a1a_2/11/255591/GammaCaloMergedML_1540.root
+/media/DATA/ALICE_Train_Output/LegoTrain_3769_20210622-1126/LHC19a1a_2/2/255591/GammaCaloMergedML_1540.root
+/media/DATA/ALICE_Train_Output/LegoTrain_3769_20210622-1126/LHC19a1a_2/5/255591/GammaCaloMergedML_1540.root
+/media/DATA/ALICE_Train_Output/LegoTrain_3769_20210622-1126/LHC19a1a_2/17/255591/GammaCaloMergedML_1540.root
+/media/DATA/ALICE_Train_Output/LegoTrain_3769_20210622-1126/LHC19a1a_2/14/255591/GammaCaloMergedML_1540.root
+/media/DATA/ALICE_Train_Output/LegoTrain_3769_20210622-1126/LHC19a1a_2/9/255591/GammaCaloMergedML_1540.root
+/media/DATA/ALICE_Train_Output/LegoTrain_3769_20210622-1126/LHC19a1a_2/12/255591/GammaCaloMergedML_1540.root
+/media/DATA/ALICE_Train_Output/LegoTrain_3769_20210622-1126/LHC19a1a_2/4/255591/GammaCaloMergedML_1540.root
