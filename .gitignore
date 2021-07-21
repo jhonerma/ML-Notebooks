@@ -1,4 +1,4 @@
 .ipynb_checkpoints
-/DataQA/Plots/
-/CNN/Plots/
-/CNN/Data/
+/DataQA/Plots/*.pdf
+/CNN/Plots/*.pdf
+/CNN/Data/*.npz
