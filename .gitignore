@@ -1,7 +1,7 @@
 .ipynb_checkpoints
 /DataQA/Plots/*.pdf
-/DataQA/Data-Raw/*
-/DataQA/Data-Split/*
+/DataQA/Data-Raw/*.npz
+/DataQA/Data-Split/*.npz
 /CNN/Plots/*.pdf
 /CNN/Data/*.npz
 
