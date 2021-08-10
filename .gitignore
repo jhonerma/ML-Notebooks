@@ -4,4 +4,5 @@
 /DataQA/Data-Split/*.npz
 /CNN/Plots/*.pdf
 /CNN/Data/*.npz
+/CNN/runs/*
 
