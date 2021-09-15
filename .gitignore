@@ -5,4 +5,5 @@
 /CNN/Plots/*.pdf
 /CNN/Data/*.npz
 /CNN/runs/*
-/CNN/Ray_Results/DEFAULT*
+/CNN/Ray_Results/ASHA*
+/CNN/Ray_Results/PBT*
