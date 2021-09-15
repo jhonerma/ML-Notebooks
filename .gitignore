@@ -5,4 +5,4 @@
 /CNN/Plots/*.pdf
 /CNN/Data/*.npz
 /CNN/runs/*
-/CNN/Ray_Results/*
+/CNN/Ray_Results/DEFAULT*
