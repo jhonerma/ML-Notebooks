@@ -202,7 +202,6 @@ class ClusterDataset_Full(utils.Dataset):
         PartPID = self.__ChangePID(PartPID)
         
         img = self.__GetClusters(ClusterN, ClusterModuleNumber, ClusterRow, ClusterCol, Cluster, ClusterTiming)
-        #img = torch.from_numpy(img)
         
         features = { "ClusterType" : ClusterType, "ClusterE" : ClusterE, "ClusterPt" : ClusterPt
                     , "ClusterM02" : ClusterM02, "ClusterM20" : ClusterM20 , "ClusterDist" : ClusterDistFromVert}
@@ -215,6 +214,7 @@ class ClusterDataset_Full(utils.Dataset):
 # Load data for normalization from file        
 def loadNormalizationData():
     data = np.load('Data/normalization.npz', allow_pickle=True)
+    
     maxData = { 'maxCellEnergy' : data['maxCellEnergy'], 'maxCellTiming' : data['maxCellTiming']
                ,'maxClusterE' : data['maxClusterE'], 'maxClusterPt' : data['maxClusterPt']
                ,'maxClusterM20' : data['maxClusterM20'], 'maxClusterM02' : data['maxClusterM02']
@@ -226,6 +226,7 @@ def loadNormalizationData():
                ,'minClusterM20' : data['minClusterM20'], 'minClusterM02' : data['minClusterM02']
                ,'minClusterDistFromVert' : data['minClusterDistFromVert'], 'minPartE' : data['minPartE']
                ,'minPartPt' : data['minPartPt'], 'minPartEta' : data['minPartEta'], 'minPartPhi' : data['minPartPhi'] }
+               
     return maxData, minData
 
 
@@ -239,7 +240,7 @@ def load_data_test(path='/home/jhonerma/ML-Notebooks/CNN/Data/data_test.npz'):
     return ds_test
     
     
-#Helper function used for getting the right dimension for input features [batch_size, 1]    
+#Helper function used for getting the right dimension for input features [batch_size, 1] for linear layers saved in a dict    
 def unsqueeze_features(features):
     for key in features.keys():
         features[key] = features[key].view(-1,1)        
