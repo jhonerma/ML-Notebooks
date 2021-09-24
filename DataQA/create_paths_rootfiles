@@ -1,1 +1,0 @@
-find "$(cd ../..; pwd)" -name "*MergedML_1540*" > MergedMLPath.txt
