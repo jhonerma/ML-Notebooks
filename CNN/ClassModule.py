@@ -100,7 +100,7 @@ class ClusterDataset_Partial(utils.Dataset):
         labels = { "PartE" : PartE, "PartPt" : PartPt, "PartEta" : PartEta, "PartPhi" : PartPhi
                   , "PartIsPrimary" : PartIsPrimary, "PartPID" : PartPID }
         
-        return img, features, labels
+        return (img, features, labels)
         
         
 # Load the full dataset into ram       
@@ -237,6 +237,14 @@ def load_data_train(path='/home/jhonerma/ML-Notebooks/CNN/Data/data_train.npz'):
 
 def load_data_test(path='/home/jhonerma/ML-Notebooks/CNN/Data/data_test.npz'):
     ds_test = ClusterDataset_Full(path)
+    return ds_test
+
+def load_data_train_partial(path='/home/jhonerma/ML-Notebooks/CNN/Data/data_train.npz'):
+    ds_train = ClusterDataset_Partial(path)
+    return ds_train
+
+def load_data_test_partial(path='/home/jhonerma/ML-Notebooks/CNN/Data/data_test.npz'):
+    ds_test = ClusterDataset_Partial(path)
     return ds_test
     
     
