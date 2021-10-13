@@ -309,7 +309,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
         local_dir = "./Ray_Results",
         scheduler=scheduler,
         stop=stopper,
-        #progress_reporter=reporter,
+        progress_reporter=reporter,
         checkpoint_score_attr="mean_accuracy",
         keep_checkpoints_num=4)
 
