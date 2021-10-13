@@ -3,9 +3,6 @@
 
 # ## Load Libraries
 
-# In[1]:
-
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -26,28 +23,17 @@ from time import strftime
 import ClassModule as cm
 
 
-# In[2]:
-
-
 # Show number of avlaible CPU threads
 # With mulithreading this number is twice the number of physical cores
 cpu_av = cpu_count()
 print("Number of available CPU's: {}".format(cpu_av))
 
-
-# In[3]:
-
-
 # Set the number CPUS that should be used per trial and dataloader
 # If set to 1 number of cucurrent training networking is equal to this number
 # In case of training with GPU this will be limited to number of models training simultaneously on GPU
 # So number of CPU threads for each trial can be increased 
-cpus_per_trial = 1
-gpus_per_trial = 0
-
-
-# In[4]:
-
+cpus_per_trial = 2
+gpus_per_trial = 0.32
 
 def get_dataloader(train_ds, val_ds, bs):
     dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1)
@@ -56,10 +42,6 @@ def get_dataloader(train_ds, val_ds, bs):
 
 
 # ## Instance Noise
-
-# In[5]:
-
-
 # https://arxiv.org/abs/1610.04490
 INSTANCE_NOISE = False
 
@@ -70,11 +52,8 @@ def add_instance_noise(data, std=0.01):
 # ## Define the network
 # Get a network-candidate from the ASHA-scheduler first and use this notebook for hyperparameter tuning
 
-# In[6]:
-
-
 class CNN(nn.Module):
-    def __init__(self, input_dim=(2,20,20), num_in_features=5):
+    def __init__(self, l1=100, l2=50, l3=25, input_dim=(2,20,20), num_in_features=5):
         super(CNN, self).__init__()
         self.feature_ext = nn.Sequential(
             nn.Conv2d(2,10, kernel_size=1),
@@ -101,11 +80,16 @@ class CNN(nn.Module):
             nn.ReLU(),
             nn.Linear(128, 4),
             nn.ReLU(),
-            nn.Linear(4, 3),
-            nn.ReLU(),
-            nn.Linear(32, 3),
+            nn.Linear(4,3),
             nn.ReLU()
         )
+        
+    def forward(self, cluster, clusNumXYEPt):
+        cluster = self.feature_ext(cluster)
+        x = self.flatten(cluster)
+        x = torch.cat([x, clusNumXYEPt], dim=1)
+        logits = self.dense_nn(x)
+        return logits
         
     def forward(self, cluster, clusNumXYEPt):
         cluster = self.feature_ext(cluster)
@@ -117,9 +101,6 @@ class CNN(nn.Module):
 
 # ## Implement train and validation loop
 # [0: 'ClusterN', 1:'Cluster', 2:'ClusterTiming', 3:'ClusterType', 4:'ClusterE', 5:'ClusterPt', 6:'ClusterModuleNumber', 7:'ClusterRow', 8:'ClusterCol', 9:'ClusterM02', 10:'ClusterM20', 11:'ClusterDistFromVert', 12:'PartE', 13:'PartPt', 14:'PartEta', 15:'PartPhi', 16:'PartIsPrimary', 17:'PartPID']
-
-# In[7]:
-
 
 def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
@@ -133,18 +114,19 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         Labels = Data[2]
         
         ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1)
-        ClusterProperties.to(device)
-         
+                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
+        #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
+        Label = Labels["PartPID"].to(device)
+        
         if INSTANCE_NOISE:
-            Clusters = add_instance_noise(Clusters)
-            
+            Clusters = add_instance_noise(Clusters, device)
+        
         # zero parameter gradients
         optimizer.zero_grad()
         
         # prediction and loss
         pred = model(Clusters, ClusterProperties)
-        loss = loss_fn(pred, Labels["PartPID"].long())
+        loss = loss_fn(pred, Label.long())
         
         # Backpropagation
         loss.backward()
@@ -153,13 +135,10 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         running_loss += loss.item()
         epoch_steps += 1
         
-        if batch % 2000 == 1999:
+        if batch % 100000 == 99999:
             print("[%d, %5d] loss: %.3f" % (epoch + 1, batch + 1,
                                             running_loss / epoch_steps))
-            running_loss = 0.0        
-
-
-# In[8]:
+            running_loss = 0.0          
 
 
 def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
@@ -176,13 +155,14 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
             Features = cm.unsqueeze_features(Data[1])
             Labels = Data[2]
             ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1)           
-            ClusterProperties.to(device)
+                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)           
+            #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
+            Label = Labels["PartPID"].to(device)
             
             pred = model(Clusters, ClusterProperties)
-            correct += (pred.argmax(1) == Labels["PartPID"]).type(torch.float).sum().item()
+            correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
 
-            loss = loss_fn(pred, Labels["PartPID"].long())#.item()
+            loss = loss_fn(pred, Label.long())#.item()
             val_loss += loss.cpu().numpy()
             val_steps += 1
     
@@ -195,15 +175,12 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
 # ## Implement method for accuracy testing on test set
 
-# In[9]:
-
-
 def test_accuracy(model, device="cpu"):
     
     dataset_test = cm.load_data_test('/media/DATA/ML-Notebooks/CNN/Data/data_test.npz')
     
     dataloader_test = utils.DataLoader(
-        dataset_test, batch_size=4, shuffle=False, num_workers=2)
+        dataset_test, batch_size=4, shuffle=False, num_workers=cpu_av-1)
     
     correct = 0
     total = len(dataloader_test.dataset)
@@ -214,20 +191,18 @@ def test_accuracy(model, device="cpu"):
             Features = cm.unsqueeze_features(Data[1])
             Labels = Data[2]
             ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1)            
-            ClusterProperties.to(device)
+                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)            
+            #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
+            Label = Labels["PartPID"].to(device)
             
             
             pred = model(Clusters, ClusterProperties)
-            correct += (pred.argmax(1) == Labels["PartPID"]).type(torch.float).sum().item()
+            correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
 
     return correct / total
 
 
 # ## Implement training routine
-
-# In[13]:
-
 
 def train_model(config, checkpoint_dir=None):
     
@@ -273,7 +248,6 @@ def train_model(config, checkpoint_dir=None):
 
 
 # ## Setup all Ray Tune functionality and start training
-
 
 def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
     
