@@ -174,7 +174,7 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
              "optimizer_state_dict" : optimizer.state_dict(),
              "mean_accuracy" : correct / size}, _path)
 
-    tune.report(loss=(val_loss / val_steps), accuracy= correct / size)
+    tune.report(loss=(val_loss / val_steps), mean_accuracy= correct / size)
 
 
 # ## Implement method for accuracy testing on test set
@@ -279,7 +279,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
     # Init the Reporter
     reporter = CLIReporter(
         parameter_columns=["lr", "wd", "batch_size"],
-        metric_columns=["loss", "accuracy", "training_iteration"])
+        metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
     #Get Current date and time
     timestr = strftime("%Y_%m_%d-%H:%M:%S")
