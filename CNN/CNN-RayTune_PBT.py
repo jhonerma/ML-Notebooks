@@ -258,7 +258,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
 
     # Setup hyperparameter-space to search
     config = {
-        "lr": tune.loguniform(1e-4, 1e1),
+        "lr": tune.loguniform(1e-4, 1e0),
         "wd" : tune.uniform(0, 1e-1),
         "batch_size": tune.choice([16, 32, 64, 128, 256])
     }
@@ -266,7 +266,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
     # Init the scheduler
     scheduler = PopulationBasedTraining(
         time_attr="training_iteration",
-        metric="accuracy",
+        metric="mean_accuracy",
         mode="max",
         perturbation_interval=5,
         hyperparam_mutations={
