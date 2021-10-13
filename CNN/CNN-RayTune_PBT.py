@@ -265,10 +265,15 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
 
     # Init the scheduler
     scheduler = PopulationBasedTraining(
-    time_attr="training_iteration",
-    metric="accuracy",
-    mode="max",
-    perturbation_interval=5)
+        time_attr="training_iteration",
+        metric="accuracy",
+        mode="max",
+        perturbation_interval=5,
+        hyperparam_mutations={
+            "lr": tune.loguniform(1e-4, 1e1),
+            "wd" : tune.uniform(0, 1e-1),
+            "batch_size": tune.choice([16, 32, 64, 128, 256])
+        })
 
 
     # Init the Reporter
