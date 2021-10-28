@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# ## Load Libraries
+### Load Libraries
 import numpy as np
 import torch
 import torch.nn as nn
@@ -9,7 +9,6 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data as utils
 
-from functools import partial as func_partial
 from functools import reduce as func_reduce
 from operator import mul as op_mul
 from ray import tune
@@ -17,8 +16,6 @@ from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
 from os import cpu_count, path
 from time import strftime
-
-from filelock import FileLock
 
 #This class contains DatasetClass and several helper functions
 import ClassModule as cm
@@ -33,26 +30,19 @@ print("Number of available CPU's: {}".format(cpu_av))
 # In case of training with GPU this will be limited to number of models training simultaneously on GPU
 # So number of CPU threads for each trial can be increased
 cpus_per_trial = 2
-gpus_per_trial = 0.33
+gpus_per_trial = 0
 
 def get_dataloader(train_ds, val_ds, bs):
-
-    # We add FileLock here because multiple workers will want to
-    # download data, and this may cause overwrites since
-    # DataLoader is not threadsafe.
-    #with FileLock(path.expanduser("/media/DATA/ML-Notebooks/CNN/Data/.data.lock")):
     dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1)
     dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1)
-
     return  dl_train, dl_val
 
 
 # ## Instance Noise
 # https://arxiv.org/abs/1610.04490
 INSTANCE_NOISE = True
-
-def add_instance_noise(data, device, std=0.01):
-    return data + torch.distributions.Normal(0, std).sample(data.shape).to(device)
+def add_instance_noise(data, device, std=0.1):
+    return data + 0.01 * torch.distributions.Normal(0, std).sample(data.shape).to(device)
 
 
 # ## Define the network
@@ -133,7 +123,7 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         running_loss += loss.item()
         epoch_steps += 1
 
-        if batch % 100000 == 99999:
+        if batch % 50000 == 49999:
             print("[%d, %5d] loss: %.3f" % (epoch + 1, batch + 1,
                                             running_loss / epoch_steps))
             running_loss = 0.0
@@ -199,7 +189,7 @@ def test_accuracy(model, device="cpu"):
 
 
 # ## Implement training routine
-def train_model(config, dataloader_train=None, dataloader_test=None, checkpoint_dir=None):
+def train_model(config, checkpoint_dir=None):
 
     # load model
     model = CNN(config["l1"],config["l2"],config["l3"])
@@ -213,7 +203,7 @@ def train_model(config, dataloader_train=None, dataloader_test=None, checkpoint_
     # send model to device
     model.to(device)
 
-    # initialise loss function and opptimizer
+    # initialise loss function and optimizer
     loss_fn = F.cross_entropy
     optimizer = torch.optim.Adam(model.parameters(),lr=config["lr"], weight_decay=config["wd"])
 
@@ -225,16 +215,17 @@ def train_model(config, dataloader_train=None, dataloader_test=None, checkpoint_
         optimizer.load_state_dict(optimizer_state)
 
     # load dataset
-    dataset_train = cm.load_data_train('/media/DATA/ML-Notebooks/CNN/Data/data_train.npz')
+    dataset_train = cm.load_data_train()
 
     # split trainset in train and validation subsets
     test_abs = int(len(dataset_train) * 0.8)
-    subset_train, subset_val = utils.random_split(
+    data_train, data_val = utils.random_split(
         dataset_train, [test_abs, len(dataset_train) - test_abs])
 
     # get dataloaders
-    dataloader_train, dataloader_val = get_dataloader(subset_train, subset_val, int(config["batch_size"]))
+    dataloader_train, dataloader_val = get_dataloader(data_train, data_val, int(config["batch_size"]))
 
+    #Start training loop
     for epoch in range(100):
         train_loop(epoch, dataloader_train, model, loss_fn, optimizer, device=device)
         val_loop(epoch, dataloader_val, model, loss_fn, optimizer, device=device)
@@ -272,20 +263,9 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
     timestr = strftime("%Y_%m_%d-%H:%M:%S")
     name = "ASHA-" + timestr
 
-    #Load the dataset for use in shared memory
-    #data = cm.load_data_train('/media/DATA/ML-Notebooks/CNN/Data/data_train.npz')
-    #test_abs = int(len(data) * 0.8)
-    #subset_train, subset_val = utils.random_split(
-    #    data, [test_abs, len(data) - test_abs])
-
-    # get dataloaders
-    #dataloader_train, dataloader_val = get_dataloader(subset_train, subset_val, 64)
-
     # Init the run method
     result = tune.run(
-        func_partial(train_model),
-        #tune.with_parameters(train_model, dataset_train=data),
-        #tune.with_parameters(train_model, dataloader_train=dataloader_train, dataloader_val=dataloader_val),
+        train_model,
         name = name,
         resources_per_trial={"cpu": cpus_per_trial, "gpu": gpus_per_trial},
         config=config,
