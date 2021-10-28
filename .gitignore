@@ -5,7 +5,6 @@
 /CNN/Plots/*.pdf
 /CNN/Data/*.npz
 /CNN/runs/*
-/CNN/Ray_Results/ASHA*
-/CNN/Ray_Results/PBT*
+*/Ray_Results/*
 *.pyc
 CNN/Data/.data.lock
