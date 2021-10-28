@@ -27,7 +27,8 @@ from time import strftime
 # 2. Change the dataset to your own data and update the training, validation and
 #    test routine accordingly.
 # 3. Change the model to your architecture and adjust the parameter searchspace
-#    in the main function
+#    in the main function. The endpart of the main routine, where the best model
+#    is used on the test, has to be adjusted for the new model
 # 4. Change the goal of training, if desired. At the moment the training goal is
 #    to minimize loss, but one could also choose e.g. to maximaze accuracy
 # 5. Choose number of epochs training should last and the number of trials by
@@ -55,7 +56,7 @@ gpus_per_trial = 0
 # configurations will be sampled. num_epochs gives the maximum number of training
 # epochs for the best perfoming trials
 num_trials = 5
-num_epochs = 30
+num_epochs = 10
 ################################################################################
 
 
@@ -180,10 +181,39 @@ class ClusterDataset_Full(utils.Dataset):
 # Helperfunction for getting the dataset. It is good to use functions for this,
 # because pythons garbage collection will trigger at the end of a function call
 # and clean up everything that is possible, i.e. free up memory and close files
-# Ray needs an absolute Path to the data
-def load_data_train(path='/home/jhonerma/ML-Notebooks/CNN/Data/data_train.npz'):
+def load_data_train(path=path.abspath('data_train.npz')):
     ds_train = ClusterDataset_Full(path)
     return ds_train
+
+def load_data_test(path=path.abspath('data_test.npz')):
+    ds_test = ClusterDataset_Full(path)
+    return ds_test
+
+# Function for loading data for normalization from file
+def load_Normalization_Data(path=path.abspath('normalization.npz')):
+    data = np.load(path, allow_pickle=True)
+
+    maxData = { 'maxCellEnergy' : data['maxCellEnergy'], 'maxCellTiming' : data['maxCellTiming']
+               ,'maxClusterE' : data['maxClusterE'], 'maxClusterPt' : data['maxClusterPt']
+               ,'maxClusterM20' : data['maxClusterM20'], 'maxClusterM02' : data['maxClusterM02']
+               ,'maxClusterDistFromVert' : data['maxClusterDistFromVert'], 'maxPartE' : data['maxPartE']
+               ,'maxPartPt' : data['maxPartPt'], 'maxPartEta' : data['maxPartEta'], 'maxPartPhi' : data['maxPartPhi'] }
+
+    minData = { 'minCellEnergy' : data['minCellEnergy'], 'minCellTiming' : data['minCellTiming']
+               ,'minClusterE' : data['minClusterE'], 'minClusterPt' : data['minClusterPt']
+               ,'minClusterM20' : data['minClusterM20'], 'minClusterM02' : data['minClusterM02']
+               ,'minClusterDistFromVert' : data['minClusterDistFromVert'], 'minPartE' : data['minPartE']
+               ,'minPartPt' : data['minPartPt'], 'minPartEta' : data['minPartEta'], 'minPartPhi' : data['minPartPhi'] }
+
+    return maxData, minData
+
+
+# Function for feature normaliztion
+
+def Norm01(data, min, max):
+    return (data - min) / (max - min)
+
+
 
 # Helperfunction for obtaining dataloaders
 def get_dataloader(train_ds, val_ds, bs):
@@ -201,8 +231,8 @@ def unsqueeze_features(features):
 ### Add Instance Noise to training image, can improve training
 # https://arxiv.org/abs/1610.04490
 INSTANCE_NOISE = True
-def add_instance_noise(data, device, std=0.1):
-    return data + 0.01 * torch.distributions.Normal(0, std).sample(data.shape).to(device)
+def add_instance_noise(data, device, std=0.01):
+    return data + 0.001 * torch.distributions.Normal(0, std).sample(data.shape).to(device)
 
 ################################################################################
 ############################## Network #########################################
@@ -263,19 +293,23 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     running_loss = 0.0
     epoch_steps = 0
 
+    # Loop through the dataset
     for batch, Data in enumerate(dataloader):
         Clusters = Data[0].to(device)
         Features = unsqueeze_features(Data[1])
         Labels = Data[2]
 
+        # add instance noise to cluster
+        if INSTANCE_NOISE:
+            Clusters = add_instance_noise(Clusters, device)
+
+        # Add all additional features into a single tensor
         ClusterProperties = torch.cat([Features["ClusterE"]
             , Features["ClusterPt"], Features["ClusterM02"]
             , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
+
         #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
         Label = Labels["PartPID"].to(device)
-
-        if INSTANCE_NOISE:
-            Clusters = add_instance_noise(Clusters, device)
 
         # zero parameter gradients
         optimizer.zero_grad()
@@ -321,6 +355,9 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
             val_loss += loss.cpu().numpy()
             val_steps += 1
 
+    # Save a checkpoint. It is automatically registered with Ray Tune and will
+    # potentially be passed as the `checkpoint_dir`parameter in future
+    # iterations.
     with tune.checkpoint_dir(epoch) as checkpoint_dir:
         _path = path.join(checkpoint_dir, "checkpoint")
         torch.save((model.state_dict(), optimizer.state_dict()), _path)
@@ -336,10 +373,10 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 ### Implement method for accuracy testing on test set
 def test_accuracy(model, device="cpu"):
     #load the test dataset
-    dataset_test = cm.load_data_test('data_test.npz')
+    dataset_test = load_data_test()
     #get dataloader
     dataloader_test = utils.DataLoader(
-        dataset_test, batch_size=4, shuffle=False, num_workers=cpu_av-1)
+        dataset_test, batch_size=32, shuffle=False, num_workers=cpu_count()-1)
 
     correct = 0
     total = len(dataloader_test.dataset)
@@ -386,7 +423,8 @@ def train_model(config, checkpoint_dir=None):
     loss_fn = F.cross_entropy
     optimizer = torch.optim.Adam(model.parameters(),lr=config["lr"], weight_decay=config["wd"])
 
-    # check whether checkpoint is available
+    # The `checkpoint_dir` parameter gets passed by Ray Tune when a checkpoint
+    # should be restored.
     if checkpoint_dir:
         model_state, optimizer_state = torch.load(
             path.join(checkpoint_dir, "checkpoint"))
