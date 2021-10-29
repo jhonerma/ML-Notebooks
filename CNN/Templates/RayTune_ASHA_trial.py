@@ -56,7 +56,7 @@ gpus_per_trial = 0
 # configurations will be sampled. num_epochs gives the maximum number of training
 # epochs for the best perfoming trials
 num_trials = 5
-num_epochs = 10
+num_epochs = 5
 ################################################################################
 
 
@@ -79,7 +79,7 @@ def load_Normalization_Data(path=path.abspath('normalization.npz')):
                ,'minClusterDistFromVert' : data['minClusterDistFromVert'], 'minPartE' : data['minPartE']
                ,'minPartPt' : data['minPartPt'], 'minPartEta' : data['minPartEta'], 'minPartPhi' : data['minPartPhi'] }
 
-    return maxData, minData
+    return minData, maxData
 
 # Implementation of pytorch dataset class for my dataset, loads the full dataset
 # into ram. Can be used for datapreprocessing and augmentation.
@@ -113,7 +113,9 @@ class ClusterDataset_Full(utils.Dataset):
         self.PartPhi = self.data['PartPhi']
         self.PartIsPrimary = self.data['PartIsPrimary']
         self.PartPID = self.data['PartPID']
-        self.maxData, self.minData = load_Normalization_Data()
+        self.Normalize = Normalize
+        if Normalize:
+            self.minData, self.maxData = load_Normalization_Data()
 
     #return size of dataset
     def __len__(self):
@@ -163,14 +165,14 @@ class ClusterDataset_Full(utils.Dataset):
         return PID
 
     # If normalize is true return normalized feature otherwise return feature
-    def __Normalize(feature, min, max):
-        if Normalize:
-            return __Norm01(feature, min, max)
+    def __Normalize(self, feature, min, max):
+        if self.Normalize:
+            return self.__Norm01(feature, min, max)
         else:
             return feature
 
     # Function for feature normaliztion to the range 0-1
-    def __Norm01(data, min, max):
+    def __Norm01(self, data, min, max):
         return (data - min) / (max - min)
 
     # Get a single entry from the data, do processing and format output
@@ -179,17 +181,17 @@ class ClusterDataset_Full(utils.Dataset):
             idx = idx.tolist()
 
         _ClusterN = self.ClusterN[idx]
-        _Cluster = self.Cluster[idx]
-        _ClusterTiming = self.ClusterTiming[idx]
+        _Cluster = self.__Normalize(self.Cluster[idx], 0, self.maxData['maxCellEnergy'])
+        _ClusterTiming = self.__Normalize(self.ClusterTiming[idx], 0, self.maxData['maxCellTiming'])
         _ClusterType = self.ClusterType[idx]
-        _ClusterE = self.ClusterE[idx]
-        _ClusterPt = self.ClusterPt[idx]
+        _ClusterE = self.__Normalize(self.ClusterE[idx], self.minData['minClusterE'], self.maxData['maxClusterE'])
+        _ClusterPt = self.__Normalize(self.ClusterPt[idx], self.minData['minClusterPt'], self.maxData['maxClusterPt'])
         _ClusterModuleNumber = self.ClusterModuleNumber[idx]
         _ClusterCol = self.ClusterCol[idx]
         _ClusterRow = self.ClusterRow[idx]
-        _ClusterM02 = self.ClusterM02[idx]
-        _ClusterM20 = self.ClusterM20[idx]
-        _ClusterDistFromVert = self.ClusterDistFromVert[idx]
+        _ClusterM02 = self.__Normalize(self.ClusterM02[idx], self.minData['minClusterM02'], self.maxData['maxClusterM02'])
+        _ClusterM20 = self.__Normalize(self.ClusterM20[idx], self.minData['minClusterM20'], self.maxData['maxClusterM20'])
+        _ClusterDistFromVert = self.__Normalize(self.ClusterDistFromVert[idx], self.minData['minClusterDistFromVert'], self.maxData['maxClusterDistFromVert'])
         _PartE = self.PartE[idx]
         _PartPt = self.PartPt[idx]
         _PartEta = self.PartEta[idx]
