@@ -479,7 +479,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
         metric="loss",
         mode="min",
         max_t=max_num_epochs,
-        grace_period=1,
+        grace_period=5,
         reduction_factor=2)
 
     # Init the Reporter, used for printing the relevant informations
@@ -500,7 +500,9 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
         num_samples=num_samples,
         local_dir = "./Ray_Results",
         scheduler=scheduler,
-        progress_reporter=reporter)
+        progress_reporter=reporter,
+        checkpoint_score_attr="accuracy",
+        keep_checkpoints_num=4))
 
     # Find best trial and use it on the testset
     best_trial = result.get_best_trial("loss", "min", "last")
