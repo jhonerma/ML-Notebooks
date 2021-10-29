@@ -28,7 +28,8 @@ from time import strftime
 #    test routine accordingly.
 # 3. Change the model to your architecture and adjust the parameter searchspace
 #    in the main function. The endpart of the main routine, where the best model
-#    is used on the test, has to be adjusted for the new model
+#    is used on the test, has to be adjusted for the new model, as does the
+#    reporter.
 # 4. Change the goal of training, if desired. At the moment the training goal is
 #    to minimize loss, but one could also choose e.g. to maximaze accuracy
 # 5. Choose number of epochs training should last and the number of trials by
@@ -283,7 +284,7 @@ class CNN(nn.Module):
         return logits
 
 ################################################################################
-################################################################################
+
 
 
 ################################################################################
@@ -456,6 +457,7 @@ def train_model(config, checkpoint_dir=None):
     print("Finished Training")
 
 ################################################################################
+
 
 ################################################################################
 ############################ Main Function #####################################
