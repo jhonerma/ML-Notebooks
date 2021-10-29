@@ -13,7 +13,9 @@ from functools import reduce as func_reduce
 from operator import mul as op_mul
 from ray import tune
 from ray.tune import CLIReporter
+from ray.tune.suggest import ConcurrencyLimiter
 from ray.tune.schedulers import ASHAScheduler
+from ray.tune.suggest.hyperopt import HyperOptSearch
 from os import cpu_count, path
 from time import strftime
 
@@ -50,14 +52,14 @@ from time import strftime
 # simultaneously on GPU. Fractional values are possible, i.e. 0.5 will train 2
 # networks on a GPU simultaneously. GPU needs enough memory to hold all models,
 # check memory consumption of model on the GPU in advance
-cpus_per_trial = 2
+cpus_per_trial = 3
 gpus_per_trial = 0
 
 # Set the numbers of trials to be run. From the given searchspace num_trials
 # configurations will be sampled. num_epochs gives the maximum number of training
 # epochs for the best perfoming trials
-num_trials = 5
-num_epochs = 5
+num_trials = 30
+num_epochs = 3
 ################################################################################
 
 
@@ -466,9 +468,9 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
 
     # Setup hyperparameter-space to search
     config = {
-        "l1": tune.sample_from(lambda _: 2 ** np.random.randint(2, 8)),
-        "l2": tune.sample_from(lambda _: 2 ** np.random.randint(2, 8)),
-        "l3": tune.sample_from(lambda _: 2 ** np.random.randint(2, 8)),
+        "l1": tune.qlograndint(64, 3000, 2),
+        "l2": tune.qlograndint(32, 2000, 2),
+        "l3": tune.qlograndint(3, 1000, 2),
         "lr": tune.loguniform(1e-4, 1e-1),
         "wd": tune.loguniform(1e-5, 1e-3),
         "batch_size": tune.choice([32, 64, 128, 256, 512])
@@ -476,11 +478,14 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
 
     # Init the scheduler
     scheduler = ASHAScheduler(
-        metric="loss",
-        mode="min",
         max_t=max_num_epochs,
-        grace_period=5,
+        grace_period=1,
         reduction_factor=2)
+
+    # Init the search algorithm
+    searchalgorithm = HyperOptSearch()
+    # Have to limit max number of concurrent trials for searchalgorithm
+    searchalgorithm = ConcurrencyLimiter(searchalgorithm, max_concurrent=4)
 
     # Init the Reporter, used for printing the relevant informations
     reporter = CLIReporter(
@@ -494,15 +499,18 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
     # Init the run method
     result = tune.run(
         train_model,
+        metric="loss",
+        mode="min",
         name = name,
         resources_per_trial={"cpu": cpus_per_trial, "gpu": gpus_per_trial},
         config=config,
         num_samples=num_samples,
         local_dir = "./Ray_Results",
+        search_alg = searchalgorithm,
         scheduler=scheduler,
         progress_reporter=reporter,
         checkpoint_score_attr="accuracy",
-        keep_checkpoints_num=4))
+        keep_checkpoints_num=4)
 
     # Find best trial and use it on the testset
     best_trial = result.get_best_trial("loss", "min", "last")
