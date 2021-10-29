@@ -17,6 +17,7 @@ from ray.tune import CLIReporter
 from ray.tune.schedulers.pb2 import PB2
 from os import cpu_count, path
 from time import strftime
+import random
 
 ################################################################################
 ############################### Usage ##########################################
@@ -52,14 +53,14 @@ from time import strftime
 # simultaneously on GPU. Fractional values are possible, i.e. 0.5 will train 2
 # networks on a GPU simultaneously. GPU needs enough memory to hold all models,
 # check memory consumption of model on the GPU in advance
-cpus_per_trial = 2
+cpus_per_trial = 3
 gpus_per_trial = 0
 
 # Set the numbers of trials to be run. From the given searchspace num_trials
 # configurations will be sampled. num_epochs gives the maximum number of training
 # epochs for the best perfoming trials
-num_trials = 5
-num_epochs = 3
+num_trials = 4
+num_epochs = 10
 ################################################################################
 
 
@@ -474,11 +475,12 @@ def train_model(config, checkpoint_dir=None):
 ### Setup all Ray Tune functionality and start training
 def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
 
-    # Setup hyperparameter-space to search
+
+    # Setup hyperparameter-space for initial parameters
     config = {
-        "lr": tune.loguniform(1e-4, 1e0),
-        "wd" : tune.uniform(0, 1e-1),
-        "batch_size": tune.choice([16, 32, 64, 128, 256])
+        "lr": tune.sample_from(lambda spec: random.uniform(1e-4, 1e0)),
+        "wd" : tune.sample_from(lambda spec: random.uniform(0, 1e-1)),
+        "batch_size": tune.sample_from(lambda spec: random.randint(32,1024))
     }
 
     # Init the scheduler
