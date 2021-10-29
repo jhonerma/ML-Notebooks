@@ -476,7 +476,8 @@ def train_model(config, checkpoint_dir=None):
 def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
 
 
-    # Setup hyperparameter-space for initial parameters
+    # Setup hyperparameter-space for initial parameters. Has to be done this way,
+    # current limitation of the pb2 implementation
     config = {
         "lr": tune.sample_from(lambda spec: random.uniform(1e-4, 1e0)),
         "wd" : tune.sample_from(lambda spec: random.uniform(0, 1e-1)),
