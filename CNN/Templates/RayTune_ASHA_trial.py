@@ -24,8 +24,8 @@ from time import strftime
 # When using this template these are the necessary modifications to be made in
 # this script:
 # 1. Figure out your available resources. How many CPU cores do I have? how much
-#    Memory does my Data need. From this configure the variables cpus_per_trial
-#    And gpus_per_trial
+#    Memory does my Data need. Do I have a GPU? From this configure the variables
+#     cpus_per_trial and gpus_per_trial.
 # 2. Change the dataset to your own data and update the training, validation and
 #    test routine accordingly.
 # 3. Change the model to your architecture and adjust the parameter searchspace
@@ -35,7 +35,7 @@ from time import strftime
 # 4. Change the goal of training, if desired. At the moment the training goal is
 #    to minimize loss, but one could also choose e.g. to maximaze accuracy
 # 5. Choose number of epochs training should last and the number of trials by
-#    adjusting
+#    adjusting the global variables below
 # One can ,of course, also change the optimizer to ones favourite in the main
 # routine. The loss function can also be changed there. There are also other
 # search algorithms available in Ray, check the documentation for all of them
@@ -44,9 +44,11 @@ from time import strftime
 
 ################################################################################
 ########################### Run Configuratinos #################################
-# Set the number CPUS that should be used per trial and dataloader
-# If set to 1 number of cucurrent training networks is equal to number of CPU
-# cores. There should enough memory available to load the dataset into Memory
+# Set the number CPUS that should be used per trial and dataloader. The number
+# of concurrent trials is the minimum of 6 or the number of avlaible cores
+# divided by cpus_per_trial. For the search algorithm to function properly this
+# upper limit is necessary.
+# There should be enough memory available to load the dataset into Memory
 # for each concurrent trial
 # In case of training with GPU this will be limited to number of models training
 # simultaneously on GPU. Fractional values are possible, i.e. 0.5 will train 2
@@ -55,12 +57,14 @@ from time import strftime
 cpus_per_trial = 3
 gpus_per_trial = 0
 
-# Set the numbers of trials to be run. From the given searchspace num_trials
-# configurations will be sampled. num_epochs gives the maximum number of training
-# epochs for the best perfoming trials
+# From the given searchspace num_trials configurations will be sampled.
+# num_epochs gives the maximum number of training epochs
+# grace_period controls after how many epochs trials will be terminated
+# num_random_trials is the number of random searches to probe the loss function
 num_trials = 30
 num_epochs = 3
 grace_period = 1
+num_random_trials = 20
 ################################################################################
 
 
@@ -487,9 +491,10 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
         reduction_factor=2)
 
     # Init the search algorithm
-    searchalgorithm = HyperOptSearch()
+    searchalgorithm = HyperOptSearch(n_initial_points=num_random_trials)
     # Have to limit max number of concurrent trials for searchalgorithm
-    searchalgorithm = ConcurrencyLimiter(searchalgorithm, max_concurrent=4)
+    searchalgorithm = ConcurrencyLimiter(searchalgorithm,
+                max_concurrent=int(min(6., np.floor(cpu_count()/cpus_per_trial))))
 
     # Init the Reporter, used for printing the relevant informations
     reporter = CLIReporter(
@@ -521,7 +526,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
     print("Best trial config: {}".format(best_trial.config))
     print("Best trial final validation loss: {}".format(best_trial.last_result["loss"]))
     print("Best trial final validation accuracy: {}".format(best_trial.last_result["accuracy"]))
-
+    # Adjust the input for your model here
     best_trained_model = CNN(best_trial.config["l1"], best_trial.config["l2"], best_trial.config["l3"])
     device = "cpu"
     if torch.cuda.is_available():

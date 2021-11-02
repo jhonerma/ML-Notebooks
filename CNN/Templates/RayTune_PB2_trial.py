@@ -55,11 +55,12 @@ import random
 cpus_per_trial = 3
 gpus_per_trial = 0
 
-# Set the numbers of trials to be run. From the given searchspace num_trials
-# configurations will be sampled. num_epochs gives the maximum number of training
-# epochs for the best perfoming trials
+# num_trials gives the size of the population, i.e. number of different trials
+# num_epochs gives the maximum number of training epochs
+# perturbation_interval controls after how many epochs bad performers change HP
 num_trials = 4
 num_epochs = 10
+perturbation_interval = 5
 ################################################################################
 
 
@@ -487,7 +488,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
     pb2_scheduler = PB2(time_attr="training_iteration",
     metric="mean_accuracy",
     mode="max",
-    perturbation_interval=5,
+    perturbation_interval=perturbation_interval,
     hyperparam_bounds={
         "lr": [1e-4, 1e1],
         "wd" : [0, 1e-1],
@@ -504,6 +505,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
     name = "PBT-" + timestr
 
     #Stops training when desired accuracy or maximum training epochs is reached
+    #Implementation of a custom stopper
     class CustomStopper(tune.Stopper):
         def __init__(self):
             self.should_stop = False
