@@ -60,6 +60,7 @@ gpus_per_trial = 0
 # epochs for the best perfoming trials
 num_trials = 30
 num_epochs = 3
+grace_period = 1
 ################################################################################
 
 
@@ -84,7 +85,7 @@ def load_Normalization_Data(path=path.abspath('normalization.npz')):
 
     return minData, maxData
 
-# Implementation of pytorch dataset class for my dataset, loads the full dataset
+# Implementation of pytorch dataset class, loads the full dataset
 # into ram. Can be used for datapreprocessing and augmentation.
 # Check the pytorch documentation for detailed instructions on setting up a
 # dataset class
@@ -117,7 +118,7 @@ class ClusterDataset_Full(utils.Dataset):
         self.PartIsPrimary = self.data['PartIsPrimary']
         self.PartPID = self.data['PartPID']
         self.Normalize = Normalize
-        if Normalize:
+        if self.Normalize:
             self.minData, self.maxData = load_Normalization_Data()
 
     #return size of dataset
@@ -246,6 +247,9 @@ def add_instance_noise(data, device, std=0.01):
 ################################################################################
 ############################## Network #########################################
 ### Define the network
+# The number of neurons per layer here has been made variable, so ray can search
+# for the optimal number. The number of channels in the feature extraction
+# layer could also be made variable e.g.
 class CNN(nn.Module):
     def __init__(self, l1=100, l2=50, l3=25, input_dim=(2,20,20), num_in_features=5):
         super(CNN, self).__init__()
@@ -479,7 +483,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
     # Init the scheduler
     scheduler = ASHAScheduler(
         max_t=max_num_epochs,
-        grace_period=1,
+        grace_period=grace_period,
         reduction_factor=2)
 
     # Init the search algorithm
