@@ -245,6 +245,9 @@ def add_instance_noise(data, device, std=0.01):
     return data + 0.001 * torch.distributions.Normal(0, std).sample(data.shape).to(device)
 
 ################################################################################
+
+
+################################################################################
 ############################## Network #########################################
 ### Define the network
 # Get a network-candidate from the ASHA-scheduler first and use this notebook

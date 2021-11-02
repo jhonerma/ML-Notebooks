@@ -249,6 +249,9 @@ def add_instance_noise(data, device, std=0.01):
     return data + 0.001 * torch.distributions.Normal(0, std).sample(data.shape).to(device)
 
 ################################################################################
+
+
+################################################################################
 ############################## Network #########################################
 ### Define the network
 # The number of neurons per layer here has been made variable, so ray can search
