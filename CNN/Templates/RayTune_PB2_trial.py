@@ -2,7 +2,6 @@
 # coding: utf-8
 
 # ## Load Libraries
-
 import numpy as np
 import torch
 import torch.nn as nn
