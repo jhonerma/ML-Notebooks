@@ -54,7 +54,7 @@ from time import strftime
 # simultaneously on GPU. Fractional values are possible, i.e. 0.5 will train 2
 # networks on a GPU simultaneously. GPU needs enough memory to hold all models,
 # check memory consumption of model on the GPU in advance
-cpus_per_trial = 3
+cpus_per_trial = 2
 gpus_per_trial = 0
 
 # From the given searchspace num_trials configurations will be sampled.
@@ -95,7 +95,7 @@ def load_Normalization_Data(path=path.abspath('normalization.npz')):
 # dataset class
 class ClusterDataset_Full(utils.Dataset):
     """Cluster dataset."""
-    #Load data
+    # Initialize class and load data
     def __init__(self, npz_file, Normalize=True, arrsize=20):
         """
         Args:
@@ -125,11 +125,11 @@ class ClusterDataset_Full(utils.Dataset):
         if self.Normalize:
             self.minData, self.maxData = load_Normalization_Data()
 
-    #return size of dataset
+    # Return size of dataset
     def __len__(self):
         return self.data["Size"]
 
-    #Routine for reconstructing clusters from given cell informations
+    # Routine for reconstructing clusters from given cell informations
     def __ReconstructCluster(self, ncell, modnum, row, col, cdata):
         _row = row.copy()
         _col = col.copy()
@@ -156,13 +156,13 @@ class ClusterDataset_Full(utils.Dataset):
             arr[ _row[i] - row_min + offset_h, _col[i] - col_min + offset_w ] = cdata[i]
         return arr
 
-    # function for merging the timing and energy information into one 'picture'
+    # Function for merging the timing and energy information into one 'picture'
     def __GetCluster(self, ncell, modnum, row, col, energy, timing):
         cluster_e = self.__ReconstructCluster(ncell, modnum, row, col, energy)
         cluster_t = self.__ReconstructCluster(ncell, modnum, row, col, timing)
         return np.stack([cluster_e, cluster_t], axis=0)
 
-    # one-hot encoding for the particle code
+    # One-hot encoding for the particle code
     def __ChangePID(self, PID):
         if (PID != 111) & (PID != 221):
             PID = np.int16(0)
@@ -345,9 +345,9 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         running_loss += loss.item()
         epoch_steps += 1
 
-        if batch % 50000 == 49999:
-            print("[%d, %5d] loss: %.3f" % (epoch + 1, batch + 1,
-                                            running_loss / epoch_steps))
+        if batch % 10000 == 9999:
+            print(f"[Epoch {epoch+1:d}, Batch {batch+1:5d}]" \
+                  f" loss: {running_loss/epoch_steps:.3f}")
             running_loss = 0.0
 
 def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
@@ -435,6 +435,8 @@ def train_model(config, checkpoint_dir=None):
         device = "cuda:0"
         if torch.cuda.device_count() > 1:
             model = nn.DataParallel(model)
+
+    print(f"Training started on device {device}")
 
     # send model to device
     model.to(device)

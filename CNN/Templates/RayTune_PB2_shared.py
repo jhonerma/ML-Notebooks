@@ -329,9 +329,9 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         running_loss += loss.item()
         epoch_steps += 1
 
-        if batch % 100000 == 99999:
-            print("[%d, %5d] loss: %.3f" % (epoch + 1, batch + 1,
-                                            running_loss / epoch_steps))
+        if batch % 10000 == 9999:
+            print(f"[Epoch {epoch+1:d}, Batch {batch+1:5d}]" \
+                  f" loss: {running_loss/epoch_steps:.3f}")
             running_loss = 0.0
 
 
@@ -424,6 +424,9 @@ def train_model(config, data=None, checkpoint_dir=None):
         device = "cuda:0"
         if torch.cuda.device_count() > 1:
             model = nn.DataParallel(model)
+
+    print(f"Training started on device {device}")
+
     # send model to device
     model.to(device)
 
