@@ -89,13 +89,13 @@ def load_Normalization_Data(path=path.abspath('normalization.npz')):
 
     return minData, maxData
 
-# Implementation of pytorch dataset class, loads the full dataset
-# into ram. Can be used for datapreprocessing and augmentation.
+# Implementation of pytorch dataset class, gets the requested items from shared
+# memory. Can be used for datapreprocessing and augmentation.
 # Check the pytorch documentation for detailed instructions on setting up a
 # dataset class
 class ClusterDataset(utils.Dataset):
     """Cluster dataset."""
-    #Load data
+    # Initialize the class
     def __init__(self, data=None, Normalize=True, arrsize=20):
 
         self.data = data
@@ -104,11 +104,11 @@ class ClusterDataset(utils.Dataset):
         if self.Normalize:
             self.minData, self.maxData = load_Normalization_Data()
 
-    #return size of dataset
+    # Return size of dataset
     def __len__(self):
         return self.data["Size"]
 
-    #Routine for reconstructing clusters from given cell informations
+    # Routine for reconstructing clusters from given cell informations
     def __ReconstructCluster(self, ncell, modnum, row, col, cdata):
         _row = row.copy()
         _col = col.copy()
@@ -135,13 +135,13 @@ class ClusterDataset(utils.Dataset):
             arr[ _row[i] - row_min + offset_h, _col[i] - col_min + offset_w ] = cdata[i]
         return arr
 
-    # function for merging the timing and energy information into one 'picture'
+    # Function for merging the timing and energy information into one 'picture'
     def __GetCluster(self, ncell, modnum, row, col, energy, timing):
         cluster_e = self.__ReconstructCluster(ncell, modnum, row, col, energy)
         cluster_t = self.__ReconstructCluster(ncell, modnum, row, col, timing)
         return np.stack([cluster_e, cluster_t], axis=0)
 
-    # one-hot encoding for the particle code
+    # One-hot encoding for the particle code
     def __ChangePID(self, PID):
         if (PID != 111) & (PID != 221):
             PID = np.int16(0)
