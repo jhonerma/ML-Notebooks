@@ -42,7 +42,7 @@ gpus_per_trial = 0
 num_trials = 4
 num_epochs = 5
 perturbation_interval = 2
-Use_Shared_Memory = True
+Use_Shared_Memory = False
 ################################################################################
 
 def get_dataloader(train_ds, val_ds, bs):
@@ -191,14 +191,13 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     # potentially be passed as the `checkpoint_dir`parameter in future
     # iterations. Also report the metrics back to ray with tune.report
     mean_accuracy= correct / size
-    if epoch % perturbation_interval-1 == 0:
-        with tune.checkpoint_dir(step=epoch) as checkpoint_dir:
-            _path = path.join(checkpoint_dir, "checkpoint")
-            torch.save({"epoch" : epoch,
-             "model_state_dict" : model.state_dict(),
-             "optimizer_state_dict" : optimizer.state_dict(),
-             "mean_accuracy" : mean_accuracy}, _path)
-        print(f"[{epoch}] Saved Checkpoint")
+    with tune.checkpoint_dir(step=epoch) as checkpoint_dir:
+        _path = path.join(checkpoint_dir, "checkpoint")
+        torch.save({"epoch" : epoch,
+         "model_state_dict" : model.state_dict(),
+         "optimizer_state_dict" : optimizer.state_dict(),
+         "mean_accuracy" : mean_accuracy}, _path)
+
 
     tune.report(loss=(val_loss / val_steps), mean_accuracy= mean_accuracy)
 ################################################################################
@@ -362,7 +361,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
         stop=stopper,
         progress_reporter=reporter,
         checkpoint_score_attr="mean_accuracy",
-        keep_checkpoints_num=4)
+        keep_checkpoints_num=2)
 
     # Find best trial and use it on the testset
     best_trial = result.get_best_trial("mean_accuracy", "max", "last")
