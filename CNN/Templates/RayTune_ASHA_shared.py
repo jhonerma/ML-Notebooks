@@ -59,7 +59,7 @@ gpus_per_trial = 0
 
 # From the given searchspace num_trials configurations will be sampled.
 # num_epochs gives the maximum number of training epochs
-# grace_period controls after how many epochs trials will be terminated
+# grace_period controls after how many epochs trials will start being terminated
 # num_random_trials is the number of random searches to probe the loss function
 num_trials = 10
 num_epochs = 3
