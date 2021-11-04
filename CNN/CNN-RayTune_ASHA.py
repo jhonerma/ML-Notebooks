@@ -352,8 +352,8 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
     # Find best trial and use it on the testset
     best_trial = result.get_best_trial("loss", "min", "last")
     print(f"Best trial config: {best_trial.config}")
-    print(f"Best trial final validation loss: {best_trial.last_result["loss"]}")
-    print(f"Best trial final validation accuracy: {best_trial.last_result["accuracy"]}")
+    print(f"Best trial final validation loss: {best_trial.last_result['loss']}")
+    print(f"Best trial final validation accuracy: {best_trial.last_result['accuracy']}")
     # Adjust the input for your model here
     best_trained_model = CNN(best_trial.config["l1"], best_trial.config["l2"], best_trial.config["l3"])
     device = "cpu"

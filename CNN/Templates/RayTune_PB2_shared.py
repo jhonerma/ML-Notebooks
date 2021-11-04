@@ -533,9 +533,9 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
 
     # Find best trial and use it on the testset
     best_trial = result.get_best_trial("loss", "min", "last")
-    print("Best trial config: {}".format(best_trial.config))
-    print("Best trial final validation loss: {}".format(best_trial.last_result["loss"]))
-    print("Best trial final validation accuracy: {}".format(best_trial.last_result["mean_accuracy"]))
+    print(f"Best trial config: {best_trial.config}")
+    print(f"Best trial final validation loss: {best_trial.last_result['loss']}")
+    print(f"Best trial final validation accuracy: {best_trial.last_result['mean_accuracy']}")
 
     best_trained_model = CNN()
     device = "cpu"
@@ -551,7 +551,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
     best_trained_model.load_state_dict(statedict["model_state_dict"])
 
     test_acc = test_accuracy(best_trained_model, device)
-    print("Best trial test set accuracy: {}".format(test_acc))
+    print(f"Best trial test set accuracy: {test_acc}")
 
 ################################################################################
 
