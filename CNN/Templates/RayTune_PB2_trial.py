@@ -380,7 +380,7 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     # potentially be passed as the `checkpoint_dir`parameter in future
     # iterations. Also report the metrics back to ray with tune.report
     mean_accuracy= correct / size
-    if epoch % 5 == 0:
+    if epoch % perturbation_interval-1 == 0:
         with tune.checkpoint_dir(step=epoch) as checkpoint_dir:
             _path = path.join(checkpoint_dir, "checkpoint")
             torch.save({"epoch" : epoch,

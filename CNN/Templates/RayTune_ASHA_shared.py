@@ -362,9 +362,10 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     # Save a checkpoint. It is automatically registered with Ray Tune and will
     # potentially be passed as the `checkpoint_dir`parameter in future
     # iterations.
-    with tune.checkpoint_dir(epoch) as checkpoint_dir:
-        _path = path.join(checkpoint_dir, "checkpoint")
-        torch.save((model.state_dict(), optimizer.state_dict()), _path)
+    if epoch % grace_period-1 == 0:
+        with tune.checkpoint_dir(epoch) as checkpoint_dir:
+            _path = path.join(checkpoint_dir, "checkpoint")
+            torch.save((model.state_dict(), optimizer.state_dict()), _path)
 
     tune.report(loss=(val_loss / val_steps), accuracy= correct / size)
 

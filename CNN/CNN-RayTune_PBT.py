@@ -40,7 +40,7 @@ gpus_per_trial = 0
 # num_epochs gives the maximum number of training epochs
 # perturbation_interval controls after how many epochs bad performers change HP
 num_trials = 4
-num_epochs = 4
+num_epochs = 5
 perturbation_interval = 2
 Use_Shared_Memory = True
 ################################################################################
@@ -51,12 +51,11 @@ def get_dataloader(train_ds, val_ds, bs):
     return  dl_train, dl_val
 
 
-# ## Instance Noise
+### Add Instance Noise to training image, can improve training
 # https://arxiv.org/abs/1610.04490
-INSTANCE_NOISE = False
-
-def add_instance_noise(data, std=0.01):
-    return data + torch.distributions.Normal(0, std).sample(data.shape).to(device)
+INSTANCE_NOISE = True
+def add_instance_noise(data, device, std=0.01):
+    return data + 0.001 * torch.distributions.Normal(0, std).sample(data.shape).to(device)
 
 
 ################################################################################
@@ -192,13 +191,14 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     # potentially be passed as the `checkpoint_dir`parameter in future
     # iterations. Also report the metrics back to ray with tune.report
     mean_accuracy= correct / size
-    if epoch % 5 == 0:
+    if epoch % perturbation_interval-1 == 0:
         with tune.checkpoint_dir(step=epoch) as checkpoint_dir:
             _path = path.join(checkpoint_dir, "checkpoint")
             torch.save({"epoch" : epoch,
              "model_state_dict" : model.state_dict(),
              "optimizer_state_dict" : optimizer.state_dict(),
              "mean_accuracy" : mean_accuracy}, _path)
+        print(f"[{epoch}] Saved Checkpoint")
 
     tune.report(loss=(val_loss / val_steps), mean_accuracy= mean_accuracy)
 ################################################################################
@@ -365,7 +365,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
         keep_checkpoints_num=4)
 
     # Find best trial and use it on the testset
-    best_trial = result.get_best_trial("loss", "min", "last")
+    best_trial = result.get_best_trial("mean_accuracy", "max", "last")
     print(f"Best trial config: {best_trial.config}")
     print(f"Best trial final validation loss: {best_trial.last_result['loss']}")
     print(f"Best trial final validation accuracy: {best_trial.last_result['mean_accuracy']}")
