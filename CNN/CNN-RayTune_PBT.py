@@ -42,7 +42,7 @@ gpus_per_trial = 0
 num_trials = 4
 num_epochs = 5
 perturbation_interval = 2
-Use_Shared_Memory = False
+Use_Shared_Memory = True
 ################################################################################
 
 def get_dataloader(train_ds, val_ds, bs):
