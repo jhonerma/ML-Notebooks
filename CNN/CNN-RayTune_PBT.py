@@ -10,30 +10,40 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data as utils
 
-from functools import partial as func_partial
 from functools import reduce as func_reduce
 from operator import mul as op_mul
 from ray import tune
 from ray.tune import CLIReporter
-from ray.tune.schedulers import PopulationBasedTraining
+from ray.tune.schedulers.pb2 import PB2
 from os import cpu_count, path
 from time import strftime
+import random
 
 #This class contains DatasetClass and several helper functions
 import ClassModule as cm
 
 
-# Show number of avlaible CPU threads
-# With mulithreading this number is twice the number of physical cores
-cpu_av = cpu_count()
-print("Number of available CPU's: {}".format(cpu_av))
-
+################################################################################
+########################### Run Configuratinos #################################
 # Set the number CPUS that should be used per trial and dataloader
-# If set to 1 number of cucurrent training networking is equal to this number
-# In case of training with GPU this will be limited to number of models training simultaneously on GPU
-# So number of CPU threads for each trial can be increased
+# If set to 1 number of cucurrent training networks is equal to number of CPU
+# cores. There should enough memory available to load the dataset into Memory
+# for each concurrent trial
+# In case of training with GPU this will be limited to number of models training
+# simultaneously on GPU. Fractional values are possible, i.e. 0.5 will train 2
+# networks on a GPU simultaneously. GPU needs enough memory to hold all models,
+# check memory consumption of model on the GPU in advance
 cpus_per_trial = 2
-gpus_per_trial = 0.32
+gpus_per_trial = 0
+
+# num_trials gives the size of the population, i.e. number of different trials
+# num_epochs gives the maximum number of training epochs
+# perturbation_interval controls after how many epochs bad performers change HP
+num_trials = 4
+num_epochs = 4
+perturbation_interval = 2
+Use_Shared_Memory = False
+################################################################################
 
 def get_dataloader(train_ds, val_ds, bs):
     dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1)
@@ -49,22 +59,25 @@ def add_instance_noise(data, std=0.01):
     return data + torch.distributions.Normal(0, std).sample(data.shape).to(device)
 
 
-# ## Define the network
-# Get a network-candidate from the ASHA-scheduler first and use this notebook for hyperparameter tuning
+################################################################################
+############################## Network #########################################
+### Define the network
+# Get a network-candidate from the ASHA-scheduler first and use this notebook
+# for hyperparameter tuning
 
 class CNN(nn.Module):
     def __init__(self, l1=100, l2=50, l3=25, input_dim=(2,20,20), num_in_features=5):
         super(CNN, self).__init__()
         self.feature_ext = nn.Sequential(
             nn.Conv2d(2,10, kernel_size=1),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Conv2d(10,10, kernel_size=5, padding=0),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.MaxPool2d(2),
             nn.Conv2d(10,10, kernel_size=3, padding=0),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Conv2d(10,6, kernel_size=1),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.MaxPool2d(2)
         )
 
@@ -75,13 +88,13 @@ class CNN(nn.Module):
 
         self.dense_nn = nn.Sequential(
             nn.Linear(num_features_after_conv + num_in_features, 16),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(16, 128),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(128, 4),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(4,3),
-            nn.ReLU()
+            nn.SiLU()
         )
 
     def forward(self, cluster, clusNumXYEPt):
@@ -98,10 +111,16 @@ class CNN(nn.Module):
         logits = self.dense_nn(x)
         return logits
 
+################################################################################
 
-# ## Implement train and validation loop
-# [0: 'ClusterN', 1:'Cluster', 2:'ClusterTiming', 3:'ClusterType', 4:'ClusterE', 5:'ClusterPt', 6:'ClusterModuleNumber', 7:'ClusterRow', 8:'ClusterCol', 9:'ClusterM02', 10:'ClusterM20', 11:'ClusterDistFromVert', 12:'PartE', 13:'PartPt', 14:'PartEta', 15:'PartPhi', 16:'PartIsPrimary', 17:'PartPID']
 
+################################################################################
+###################### Training and Validation loop ############################
+### Implement train and validation loop
+# Data[0] contains an image of of the cell energies and timings.
+# Data[1] contains all features in a dict. Their shapes have to be changed from
+# [batch_size] to [batch_size,1] for input into linear layers, implemented via
+# function unsqueeze features here. Data[2] contains all labels
 def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
     size = len(dataloader.dataset)
@@ -113,13 +132,16 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         Features = cm.unsqueeze_features(Data[1])
         Labels = Data[2]
 
-        ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
-        #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-        Label = Labels["PartPID"].to(device)
-
+        # add instance noise to cluster
         if INSTANCE_NOISE:
             Clusters = add_instance_noise(Clusters, device)
+
+        # Add all additional features into a single tensor
+        ClusterProperties = torch.cat([Features["ClusterE"]
+            , Features["ClusterPt"], Features["ClusterM02"]
+            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
+        #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
+        Label = Labels["PartPID"].to(device)
 
         # zero parameter gradients
         optimizer.zero_grad()
@@ -135,9 +157,9 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         running_loss += loss.item()
         epoch_steps += 1
 
-        if batch % 100000 == 99999:
-            print("[%d, %5d] loss: %.3f" % (epoch + 1, batch + 1,
-                                            running_loss / epoch_steps))
+        if batch % 10000 == 9999:
+            print(f"[Epoch {epoch+1:d}, Batch {batch+1:5d}]" \
+                  f" loss: {running_loss/epoch_steps:.3f}")
             running_loss = 0.0
 
 
@@ -166,25 +188,33 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
             val_loss += loss.cpu().numpy()
             val_steps += 1
 
+    # Save a checkpoint. It is automatically registered with Ray Tune and will
+    # potentially be passed as the `checkpoint_dir`parameter in future
+    # iterations. Also report the metrics back to ray with tune.report
+    mean_accuracy= correct / size
     if epoch % 5 == 0:
-    	with tune.checkpoint_dir(step=epoch) as checkpoint_dir:
-        	_path = path.join(checkpoint_dir, "checkpoint")
-        	torch.save({"epoch" : epoch,
+        with tune.checkpoint_dir(step=epoch) as checkpoint_dir:
+            _path = path.join(checkpoint_dir, "checkpoint")
+            torch.save({"epoch" : epoch,
              "model_state_dict" : model.state_dict(),
              "optimizer_state_dict" : optimizer.state_dict(),
-             "mean_accuracy" : correct / size}, _path)
+             "mean_accuracy" : mean_accuracy}, _path)
 
-    tune.report(loss=(val_loss / val_steps), mean_accuracy= correct / size)
+    tune.report(loss=(val_loss / val_steps), mean_accuracy= mean_accuracy)
+################################################################################
 
 
-# ## Implement method for accuracy testing on test set
-
+################################################################################
+############################## Test Loop #######################################
+### Implement method for accuracy testing on test set
 def test_accuracy(model, device="cpu"):
 
-    dataset_test = cm.load_data_test('/media/DATA/ML-Notebooks/CNN/Data/data_test.npz')
+    #load the test dataset
+    dataset_test = cm.load_data_test()
 
+    #get dataloader
     dataloader_test = utils.DataLoader(
-        dataset_test, batch_size=4, shuffle=False, num_workers=cpu_av-1)
+        dataset_test, batch_size=32, shuffle=False, num_workers=cpu_count()-1)
 
     correct = 0
     total = len(dataloader_test.dataset)
@@ -204,11 +234,13 @@ def test_accuracy(model, device="cpu"):
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
 
     return correct / total
+################################################################################
 
 
-# ## Implement training routine
-
-def train_model(config, checkpoint_dir=None):
+################################################################################
+############################# Training Routine #################################
+### Implement training routine
+def train_model(config, data=None, checkpoint_dir=None):
     epoch = 0
     # load model
     model = CNN()
@@ -219,6 +251,9 @@ def train_model(config, checkpoint_dir=None):
         device = "cuda:0"
         if torch.cuda.device_count() > 1:
             model = nn.DataParallel(model)
+
+    print(f"Training started on device {device}")
+
     # send model to device
     model.to(device)
 
@@ -236,7 +271,10 @@ def train_model(config, checkpoint_dir=None):
 
 
     # load dataset
-    dataset_train = cm.load_data_train('/media/DATA/ML-Notebooks/CNN/Data/data_train.npz')
+    if Use_Shared_Memory:
+        dataset_train = cm.ClusterDataset(data=data)
+    else:
+        dataset_train = cm.load_data_train()
 
     # split trainset in train and validation subsets
     test_abs = int(len(dataset_train) * 0.8)
@@ -252,45 +290,51 @@ def train_model(config, checkpoint_dir=None):
         epoch += 1
 
 
-# ## Setup all Ray Tune functionality and start training
+################################################################################
 
+
+################################################################################
+############################ Main Function #####################################
+### Setup all Ray Tune functionality and start training
 def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
 
-    # Setup hyperparameter-space to search
+
+    # Setup hyperparameter-space for initial parameters. Has to be done this way,
+    # current limitation of the pb2 implementation
     config = {
-        "lr": tune.loguniform(1e-4, 1e0),
-        "wd" : tune.uniform(0, 1e-1),
-        "batch_size": tune.choice([16, 32, 64, 128, 256])
+        "lr": tune.sample_from(lambda spec: random.uniform(1e-4, 1e0)),
+        "wd" : tune.sample_from(lambda spec: random.uniform(0, 1e-1)),
+        "batch_size": tune.sample_from(lambda spec: random.randint(32,1024))
     }
 
     # Init the scheduler
-    scheduler = PopulationBasedTraining(
-        time_attr="training_iteration",
-        metric="mean_accuracy",
-        mode="max",
-        perturbation_interval=5,
-        hyperparam_mutations={
-            "lr": tune.loguniform(1e-4, 1e1),
-            "wd" : tune.uniform(0, 1e-1),
-            "batch_size": tune.choice([16, 32, 64, 128, 256])
+    pb2_scheduler = PB2(time_attr="training_iteration",
+    metric="mean_accuracy",
+    mode="max",
+    perturbation_interval=perturbation_interval,
+    hyperparam_bounds={
+        "lr": [1e-4, 1e1],
+        "wd" : [0, 1e-1],
+        "batch_size": [32, 1024]
         })
 
-
-    # Init the Reporter
+    # Init the Reporter, used for printing the relevant informations
     reporter = CLIReporter(
         parameter_columns=["lr", "wd", "batch_size"],
         metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
-    #Get Current date and time
+    #Get Current date and time for checkpoint folder
     timestr = strftime("%Y_%m_%d-%H:%M:%S")
     name = "PBT-" + timestr
 
+    #Stops training when desired accuracy or maximum training epochs is reached
+    #Implementation of a custom stopper
     class CustomStopper(tune.Stopper):
         def __init__(self):
             self.should_stop = False
 
         def __call__(self, trial_id, result):
-            if not self.should_stop and result["mean_accuracy"] > 0.9:
+            if not self.should_stop and result["mean_accuracy"] > 0.95:
                 self.should_stop = True
             return self.should_stop or result["training_iteration"] >= max_num_epochs
 
@@ -299,15 +343,22 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
 
     stopper = CustomStopper()
 
+    # Load the dataset, with tune.with_parameters the data will be loaded to the
+    # shared memory and every trials will have access to it
+    if Use_Shared_Memory:
+        dataset = cm.load_data()
+    else:
+        dataset = None
+
     # Init the run method
     result = tune.run(
-        train_model,
+        tune.with_parameters(train_model, data=dataset),
         name = name,
         resources_per_trial={"cpu": cpus_per_trial, "gpu": gpus_per_trial},
         config=config,
         num_samples=num_samples,
         local_dir = "./Ray_Results",
-        scheduler=scheduler,
+        scheduler=pb2_scheduler,
         stop=stopper,
         progress_reporter=reporter,
         checkpoint_score_attr="mean_accuracy",
@@ -317,7 +368,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
     best_trial = result.get_best_trial("loss", "min", "last")
     print("Best trial config: {}".format(best_trial.config))
     print("Best trial final validation loss: {}".format(best_trial.last_result["loss"]))
-    print("Best trial final validation accuracy: {}".format(best_trial.last_result["accuracy"]))
+    print("Best trial final validation accuracy: {}".format(best_trial.last_result["mean_accuracy"]))
 
     best_trained_model = CNN()
     device = "cpu"
@@ -328,15 +379,20 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
     best_trained_model.to(device)
 
     best_checkpoint_dir = best_trial.checkpoint.value
-    model_state, optimizer_state = torch.load(path.join(
+    statedict = torch.load(path.join(
         best_checkpoint_dir, "checkpoint"))
-    best_trained_model.load_state_dict(model_state)
+    best_trained_model.load_state_dict(statedict["model_state_dict"])
 
     test_acc = test_accuracy(best_trained_model, device)
     print("Best trial test set accuracy: {}".format(test_acc))
 
+################################################################################
 
 
 
+
+################################################################################
+######################### Starting the training ################################
 if __name__ == "__main__":
-	main(num_samples=10, max_num_epochs=100, gpus_per_trial=gpus_per_trial)
+	main(num_samples=num_trials, max_num_epochs=num_epochs
+        , gpus_per_trial=gpus_per_trial)
