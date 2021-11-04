@@ -4,29 +4,49 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data as utils
+from os import cpu_count, path
 
-#DatasetClass for partialy importing dataset while loading
-# Needs reworking opening and closing the file too many times with multithreading
-# which leads to crashing
-# if clusters were saved as seperate images it would make sense to load them
-class ClusterDataset_Partial(utils.Dataset):
+# Function for loading data for normalization from file
+def load_Normalization_Data(path=path.abspath('Data/normalization.npz')):
+    data = np.load(path, allow_pickle=True)
+
+    maxData = { 'maxCellEnergy' : data['maxCellEnergy'], 'maxCellTiming' : data['maxCellTiming']
+               ,'maxClusterE' : data['maxClusterE'], 'maxClusterPt' : data['maxClusterPt']
+               ,'maxClusterM20' : data['maxClusterM20'], 'maxClusterM02' : data['maxClusterM02']
+               ,'maxClusterDistFromVert' : data['maxClusterDistFromVert'], 'maxPartE' : data['maxPartE']
+               ,'maxPartPt' : data['maxPartPt'], 'maxPartEta' : data['maxPartEta'], 'maxPartPhi' : data['maxPartPhi'] }
+
+    minData = { 'minCellEnergy' : data['minCellEnergy'], 'minCellTiming' : data['minCellTiming']
+               ,'minClusterE' : data['minClusterE'], 'minClusterPt' : data['minClusterPt']
+               ,'minClusterM20' : data['minClusterM20'], 'minClusterM02' : data['minClusterM02']
+               ,'minClusterDistFromVert' : data['minClusterDistFromVert'], 'minPartE' : data['minPartE']
+               ,'minPartPt' : data['minPartPt'], 'minPartEta' : data['minPartEta'], 'minPartPhi' : data['minPartPhi'] }
+
+    return minData, maxData
+
+# Implementation of pytorch dataset class, gets the requested items from shared
+# memory. Can be used for datapreprocessing and augmentation.
+# Check the pytorch documentation for detailed instructions on setting up a
+# dataset class
+class ClusterDataset(utils.Dataset):
     """Cluster dataset."""
+    # Initialize the class
+    def __init__(self, data=None, Normalize=True, arrsize=20):
 
-    def __init__(self, npz_file, arrsize=20):
-        """
-        Args:
-            npz_file (string): Path to the npz file.
-        """
-        self.data = np.load(npz_file, allow_pickle=True)
+        self.data = data
         self.arrsize = arrsize
-        
+        self.Normalize = Normalize
+        if self.Normalize:
+            self.minData, self.maxData = load_Normalization_Data()
 
+    # Return size of dataset
     def __len__(self):
         return self.data["Size"]
-    
+
+    # Routine for reconstructing clusters from given cell informations
     def __ReconstructCluster(self, ncell, modnum, row, col, cdata):
         _row = row.copy()
-        _col = col.copy()       
+        _col = col.copy()
         if not np.all( modnum[0] == modnum[:ncell]):
             ModNumDif = modnum - np.min(modnum[:ncell])
             mask = np.where(ModNumDif == 1)
@@ -36,28 +56,27 @@ class ClusterDataset_Partial(utils.Dataset):
             mask = np.where(ModNumDif == 3)
             _row[mask] += 24
             _col[mask] += 48
-        
+
         arr = np.zeros(( self.arrsize, self.arrsize ), dtype=np.float32)
-  
+
         col_min = np.min(_col[:ncell])
         row_min = np.min(_row[:ncell])
         width = np.max(_col[:ncell]) - col_min
         height = np.max(_row[:ncell]) - row_min
         offset_h = int((self.arrsize-height)/2)
         offset_w = int((self.arrsize-width)/2)
-        
+
         for i in range(ncell):
             arr[ _row[i] - row_min + offset_h, _col[i] - col_min + offset_w ] = cdata[i]
-
         return arr
-    
-    def __GetClusters(self, ncell, modnum, row, col, energy, timing):
-        
+
+    # Function for merging the timing and energy information into one 'picture'
+    def __GetCluster(self, ncell, modnum, row, col, energy, timing):
         cluster_e = self.__ReconstructCluster(ncell, modnum, row, col, energy)
         cluster_t = self.__ReconstructCluster(ncell, modnum, row, col, timing)
+        return np.stack([cluster_e, cluster_t], axis=0)
 
-        return np.stack([cluster_e, cluster_t], axis=1)
-    
+    # One-hot encoding for the particle code
     def __ChangePID(self, PID):
         if (PID != 111) & (PID != 221):
             PID = np.int16(0)
@@ -67,47 +86,61 @@ class ClusterDataset_Partial(utils.Dataset):
             PID = np.int16(2)
         return PID
 
+    # If normalize is true return normalized feature otherwise return feature
+    def __Normalize(self, feature, min, max):
+        if self.Normalize:
+            return self.__Norm01(feature, min, max)
+        else:
+            return feature
+
+    # Function for feature normaliztion to the range 0-1
+    def __Norm01(self, data, min, max):
+        return (data - min) / (max - min)
+
+    # Get a single entry from the data, do processing and format output
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
-        
-        ClusterN = self.data['ClusterN'][idx]
-        Cluster = self.data['Cluster'][idx]
-        ClusterTiming = self.data['ClusterTiming'][idx]
-        ClusterType = self.data['ClusterType'][idx]
-        ClusterE = self.data['ClusterE'][idx]
-        ClusterPt = self.data['ClusterPt'][idx]
-        ClusterModuleNumber = self.data['ClusterModuleNumber'][idx]
-        ClusterCol = self.data['ClusterCol'][idx]
-        ClusterRow = self.data['ClusterRow'][idx]
-        ClusterM02 = self.data['ClusterM02'][idx]
-        ClusterM20 = self.data['ClusterM20'][idx]
-        ClusterDistFromVert = self.data['ClusterDistFromVert'][idx]
-        PartE = self.data['PartE'][idx]
-        PartPt = self.data['PartPt'][idx]
-        PartEta = self.data['PartEta'][idx]
-        PartPhi = self.data['PartPhi'][idx]
-        PartIsPrimary = self.data['PartIsPrimary'][idx]
-        PartPID = self.data['PartPID'][idx]
-       
-        PartPID = self.__ChangePID(PartPID)
-        
-        img = self.__GetClusters(ClusterN, ClusterModuleNumber, ClusterRow, ClusterCol, Cluster, ClusterTiming)
-        img = torch.from_numpy(img)
-        
-        features = { "ClusterType" : ClusterType, "ClusterE" : ClusterE, "ClusterPt" : ClusterPt
-                    , "ClusterM02" : ClusterM02, "ClusterM20" : ClusterM20 , "ClusterDistFromVert" : ClusterDistFromVert}
-        labels = { "PartE" : PartE, "PartPt" : PartPt, "PartEta" : PartEta, "PartPhi" : PartPhi
-                  , "PartIsPrimary" : PartIsPrimary, "PartPID" : PartPID }
-        
+
+        _ClusterN = self.data['ClusterN'][idx]
+        _Cluster = self.__Normalize(self.data['Cluster'][idx], 0, self.maxData['maxCellEnergy'])
+        _ClusterTiming = self.__Normalize(self.data['ClusterTiming'][idx], 0, self.maxData['maxCellTiming'])
+        _ClusterType = self.data['ClusterType'][idx]
+        _ClusterE = self.__Normalize(self.data['ClusterE'][idx], self.minData['minClusterE'], self.maxData['maxClusterE'])
+        _ClusterPt = self.__Normalize(self.data['ClusterPt'][idx], self.minData['minClusterPt'], self.maxData['maxClusterPt'])
+        _ClusterModuleNumber = self.data['ClusterModuleNumber'][idx]
+        _ClusterCol = self.data['ClusterCol'][idx]
+        _ClusterRow = self.data['ClusterRow'][idx]
+        _ClusterM02 = self.__Normalize(self.data['ClusterM02'][idx], self.minData['minClusterM02'], self.maxData['maxClusterM02'])
+        _ClusterM20 = self.__Normalize(self.data['ClusterM20'][idx], self.minData['minClusterM20'], self.maxData['maxClusterM20'])
+        _ClusterDistFromVert = self.__Normalize(self.data['ClusterDistFromVert'][idx], self.minData['minClusterDistFromVert'], self.maxData['maxClusterDistFromVert'])
+        _PartE = self.data['PartE'][idx]
+        _PartPt = self.data['PartPt'][idx]
+        _PartEta = self.data['PartEta'][idx]
+        _PartPhi = self.data['PartPhi'][idx]
+        _PartIsPrimary = self.data['PartIsPrimary'][idx]
+        _PartPID = self.data['PartPID'][idx]
+
+        _PartPID = self.__ChangePID(_PartPID)
+
+        img = self.__GetCluster(_ClusterN, _ClusterModuleNumber, _ClusterRow, _ClusterCol, _Cluster, _ClusterTiming)
+
+        features = { "ClusterType" : _ClusterType, "ClusterE" : _ClusterE, "ClusterPt" : _ClusterPt
+                    , "ClusterM02" : _ClusterM02, "ClusterM20" : _ClusterM20 , "ClusterDist" : _ClusterDistFromVert}
+        labels = { "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
+                  , "PartIsPrimary" : _PartIsPrimary, "PartPID" : _PartPID }
+
         return (img, features, labels)
-        
-        
-# Load the full dataset into ram       
+
+
+# Implementation of pytorch dataset class, loads the full dataset
+# into ram. Can be used for datapreprocessing and augmentation.
+# Check the pytorch documentation for detailed instructions on setting up a
+# dataset class
 class ClusterDataset_Full(utils.Dataset):
     """Cluster dataset."""
-
-    def __init__(self, npz_file, arrsize=20):
+    # Initialize class and load data
+    def __init__(self, npz_file, Normalize=True, arrsize=20):
         """
         Args:
             npz_file (string): Path to the npz file.
@@ -132,13 +165,18 @@ class ClusterDataset_Full(utils.Dataset):
         self.PartPhi = self.data['PartPhi']
         self.PartIsPrimary = self.data['PartIsPrimary']
         self.PartPID = self.data['PartPID']
+        self.Normalize = Normalize
+        if self.Normalize:
+            self.minData, self.maxData = load_Normalization_Data()
 
+    # Return size of dataset
     def __len__(self):
         return self.data["Size"]
-    
+
+    # Routine for reconstructing clusters from given cell informations
     def __ReconstructCluster(self, ncell, modnum, row, col, cdata):
         _row = row.copy()
-        _col = col.copy()       
+        _col = col.copy()
         if not np.all( modnum[0] == modnum[:ncell]):
             ModNumDif = modnum - np.min(modnum[:ncell])
             mask = np.where(ModNumDif == 1)
@@ -148,25 +186,27 @@ class ClusterDataset_Full(utils.Dataset):
             mask = np.where(ModNumDif == 3)
             _row[mask] += 24
             _col[mask] += 48
-        
+
         arr = np.zeros(( self.arrsize, self.arrsize ), dtype=np.float32)
-  
+
         col_min = np.min(_col[:ncell])
         row_min = np.min(_row[:ncell])
         width = np.max(_col[:ncell]) - col_min
         height = np.max(_row[:ncell]) - row_min
         offset_h = int((self.arrsize-height)/2)
         offset_w = int((self.arrsize-width)/2)
-        
+
         for i in range(ncell):
             arr[ _row[i] - row_min + offset_h, _col[i] - col_min + offset_w ] = cdata[i]
         return arr
-    
-    def __GetClusters(self, ncell, modnum, row, col, energy, timing):       
+
+    # Function for merging the timing and energy information into one 'picture'
+    def __GetCluster(self, ncell, modnum, row, col, energy, timing):
         cluster_e = self.__ReconstructCluster(ncell, modnum, row, col, energy)
         cluster_t = self.__ReconstructCluster(ncell, modnum, row, col, timing)
         return np.stack([cluster_e, cluster_t], axis=0)
-    
+
+    # One-hot encoding for the particle code
     def __ChangePID(self, PID):
         if (PID != 111) & (PID != 221):
             PID = np.int16(0)
@@ -176,80 +216,83 @@ class ClusterDataset_Full(utils.Dataset):
             PID = np.int16(2)
         return PID
 
+    # If normalize is true return normalized feature otherwise return feature
+    def __Normalize(self, feature, min, max):
+        if self.Normalize:
+            return self.__Norm01(feature, min, max)
+        else:
+            return feature
+
+    # Function for feature normaliztion to the range 0-1
+    def __Norm01(self, data, min, max):
+        return (data - min) / (max - min)
+
+    # Get a single entry from the data, do processing and format output
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
-        
-        ClusterN = self.ClusterN[idx]
-        Cluster = self.Cluster[idx]
-        ClusterTiming = self.ClusterTiming[idx]
-        ClusterType = self.ClusterType[idx]
-        ClusterE = self.ClusterE[idx]
-        ClusterPt = self.ClusterPt[idx]
-        ClusterModuleNumber = self.ClusterModuleNumber[idx]
-        ClusterCol = self.ClusterCol[idx]
-        ClusterRow = self.ClusterRow[idx]
-        ClusterM02 = self.ClusterM02[idx]
-        ClusterM20 = self.ClusterM20[idx]
-        ClusterDistFromVert = self.ClusterDistFromVert[idx]
-        PartE = self.PartE[idx]
-        PartPt = self.PartPt[idx]
-        PartEta = self.PartEta[idx]
-        PartPhi = self.PartPhi[idx]
-        PartIsPrimary = self.PartIsPrimary[idx]
-        PartPID = self.PartPID[idx]
-        
-        PartPID = self.__ChangePID(PartPID)
-        
-        img = self.__GetClusters(ClusterN, ClusterModuleNumber, ClusterRow, ClusterCol, Cluster, ClusterTiming)
-        
-        features = { "ClusterType" : ClusterType, "ClusterE" : ClusterE, "ClusterPt" : ClusterPt
-                    , "ClusterM02" : ClusterM02, "ClusterM20" : ClusterM20 , "ClusterDist" : ClusterDistFromVert}
-        labels = { "PartE" : PartE, "PartPt" : PartPt, "PartEta" : PartEta, "PartPhi" : PartPhi
-                  , "PartIsPrimary" : PartIsPrimary, "PartPID" : PartPID }
-        
+
+        _ClusterN = self.ClusterN[idx]
+        _Cluster = self.__Normalize(self.Cluster[idx], 0, self.maxData['maxCellEnergy'])
+        _ClusterTiming = self.__Normalize(self.ClusterTiming[idx], 0, self.maxData['maxCellTiming'])
+        _ClusterType = self.ClusterType[idx]
+        _ClusterE = self.__Normalize(self.ClusterE[idx], self.minData['minClusterE'], self.maxData['maxClusterE'])
+        _ClusterPt = self.__Normalize(self.ClusterPt[idx], self.minData['minClusterPt'], self.maxData['maxClusterPt'])
+        _ClusterModuleNumber = self.ClusterModuleNumber[idx]
+        _ClusterCol = self.ClusterCol[idx]
+        _ClusterRow = self.ClusterRow[idx]
+        _ClusterM02 = self.__Normalize(self.ClusterM02[idx], self.minData['minClusterM02'], self.maxData['maxClusterM02'])
+        _ClusterM20 = self.__Normalize(self.ClusterM20[idx], self.minData['minClusterM20'], self.maxData['maxClusterM20'])
+        _ClusterDistFromVert = self.__Normalize(self.ClusterDistFromVert[idx], self.minData['minClusterDistFromVert'], self.maxData['maxClusterDistFromVert'])
+        _PartE = self.PartE[idx]
+        _PartPt = self.PartPt[idx]
+        _PartEta = self.PartEta[idx]
+        _PartPhi = self.PartPhi[idx]
+        _PartIsPrimary = self.PartIsPrimary[idx]
+        _PartPID = self.PartPID[idx]
+
+        _PartPID = self.__ChangePID(_PartPID)
+
+        img = self.__GetCluster(_ClusterN, _ClusterModuleNumber, _ClusterRow, _ClusterCol, _Cluster, _ClusterTiming)
+
+        features = { "ClusterType" : _ClusterType, "ClusterE" : _ClusterE, "ClusterPt" : _ClusterPt
+                    , "ClusterM02" : _ClusterM02, "ClusterM20" : _ClusterM20 , "ClusterDist" : _ClusterDistFromVert}
+        labels = { "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
+                  , "PartIsPrimary" : _PartIsPrimary, "PartPID" : _PartPID }
+
         return (img, features, labels)
-        
-
-# Load data for normalization from file        
-def loadNormalizationData():
-    data = np.load('Data/normalization.npz', allow_pickle=True)
-    
-    maxData = { 'maxCellEnergy' : data['maxCellEnergy'], 'maxCellTiming' : data['maxCellTiming']
-               ,'maxClusterE' : data['maxClusterE'], 'maxClusterPt' : data['maxClusterPt']
-               ,'maxClusterM20' : data['maxClusterM20'], 'maxClusterM02' : data['maxClusterM02']
-               ,'maxClusterDistFromVert' : data['maxClusterDistFromVert'], 'maxPartE' : data['maxPartE']
-               ,'maxPartPt' : data['maxPartPt'], 'maxPartEta' : data['maxPartEta'], 'maxPartPhi' : data['maxPartPhi'] }
-
-    minData = { 'minCellEnergy' : data['minCellEnergy'], 'minCellTiming' : data['minCellTiming']
-               ,'minClusterE' : data['minClusterE'], 'minClusterPt' : data['minClusterPt']
-               ,'minClusterM20' : data['minClusterM20'], 'minClusterM02' : data['minClusterM02']
-               ,'minClusterDistFromVert' : data['minClusterDistFromVert'], 'minPartE' : data['minPartE']
-               ,'minPartPt' : data['minPartPt'], 'minPartEta' : data['minPartEta'], 'minPartPhi' : data['minPartPhi'] }
-               
-    return maxData, minData
 
 
-#Helper functions for loading the dataset    
-def load_data_train(path='/home/jhonerma/ML-Notebooks/CNN/Data/data_train.npz'):
+
+
+#Helper functions for loading the dataset
+def load_data_train(path=path.abspath('Data/data_train.npz')):
     ds_train = ClusterDataset_Full(path)
     return ds_train
 
-def load_data_test(path='/home/jhonerma/ML-Notebooks/CNN/Data/data_test.npz'):
+def load_data_test(path=path.abspath('Data/data_test.npz')):
     ds_test = ClusterDataset_Full(path)
     return ds_test
 
-def load_data_train_partial(path='/home/jhonerma/ML-Notebooks/CNN/Data/data_train.npz'):
-    ds_train = ClusterDataset_Partial(path)
-    return ds_train
+# Helperfunction for loading the dataset. It is good to use functions for this,
+# because pythons garbage collection will trigger at the end of a function call
+# and clean up everything that is possible, i.e. free up memory and close files
+def load_data(path=path.abspath('Data/data_train.npz')):
+    data = np.load(path, allow_pickle=True)
+    data_dict = { 'Size' : data['Size'], 'ClusterN' : data['ClusterN'], 'Cluster' : data['Cluster']
+    , 'ClusterTiming' : data['ClusterTiming'], 'ClusterType' : data['ClusterType']
+    , 'ClusterE' : data['ClusterE'], 'ClusterPt' : data['ClusterPt']
+    , 'ClusterModuleNumber' : data['ClusterModuleNumber'], 'ClusterCol' : data['ClusterCol'], 'ClusterCol' : data['ClusterCol']
+    , 'ClusterRow' : data['ClusterRow'], 'ClusterM02' : data['ClusterM02']
+    , 'ClusterM20' : data['ClusterM20'], 'ClusterDistFromVert' : data['ClusterDistFromVert']
+    , 'PartE' : data['PartE'], 'PartPt' : data['PartPt']
+    , 'PartEta' : data['PartEta'], 'PartPhi' : data['PartPhi']
+    , 'PartIsPrimary' : data['PartIsPrimary'], 'PartPID' : data['PartPID']}
+    return data_dict
 
-def load_data_test_partial(path='/home/jhonerma/ML-Notebooks/CNN/Data/data_test.npz'):
-    ds_test = ClusterDataset_Partial(path)
-    return ds_test
-    
-    
-#Helper function used for getting the right dimension for input features [batch_size, 1] for linear layers saved in a dict    
+
+#Helper function used for getting the right dimension for input features [batch_size, 1] for linear layers saved in a dict
 def unsqueeze_features(features):
     for key in features.keys():
-        features[key] = features[key].view(-1,1)        
+        features[key] = features[key].view(-1,1)
     return features
