@@ -164,7 +164,7 @@ class CNN(nn.Module):
         #print(f"After block3 {x.shape}")
         x = self.block4(x)
         #print(f"After block4 {x.shape}")
-        x = self.block5(x)
+        #x = self.block5(x)
         #print(f"After block5 {x.shape}")
         x = self.avgpool(x)
         feat = func_reduce(op_mul, list(x.shape))
@@ -176,7 +176,7 @@ class CNN(nn.Module):
         x = self.block2(x)
         x = self.block3(x)
         x = self.block4(x)
-        x = self.block5(x)
+        #x = self.block5(x)
         x = self.avgpool(x)
         x = self.flatten(x)
         x = torch.cat([x, clusNumXYEPt], dim=1)
@@ -373,12 +373,12 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
 
     # Setup hyperparameter-space to search
     config = {
-        "l1": tune.qlograndint(2500, 5000, 2),
-        "l2": tune.qlograndint(1250, 2500, 2),
-        "l3": tune.qlograndint(625, 1250, 2),
-        "l4": tune.qlograndint(300, 625, 2),
-        "l5": tune.qlograndint(150, 300, 2),
-        "l6": tune.qlograndint(27, 150, 2),
+        "l1": tune.qlograndint(1250, 2500, 2),
+        "l2": tune.qlograndint(625, 1250, 2),
+        "l3": tune.qlograndint(300, 625, 2),
+        "l4": tune.qlograndint(150, 300, 2),
+        "l5": tune.qlograndint(75, 150, 2),
+        "l6": tune.qlograndint(12, 75, 2),
         "lr": tune.loguniform(1e-4, 1e-1),
         "wd": tune.loguniform(1e-5, 1e-3),
         "batch_size": tune.choice([32, 64, 128, 256, 512])
