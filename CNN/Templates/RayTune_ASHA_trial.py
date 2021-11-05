@@ -61,10 +61,14 @@ gpus_per_trial = 0
 # num_epochs gives the maximum number of training epochs
 # grace_period controls after how many epochs trials will be terminated
 # num_random_trials is the number of random searches to probe the loss function
-num_trials = 30
+# pin_memory and non_blocking can increase performance when loading data from cpu
+# to gpu, set to False when training without gpu
+num_trials = 6
 num_epochs = 3
 grace_period = 1
-num_random_trials = 20
+num_random_trials = 6
+pin_memory = False
+non_blocking = False
 ################################################################################
 
 
@@ -96,7 +100,7 @@ def load_Normalization_Data(path=path.abspath('normalization.npz')):
 class ClusterDataset_Full(utils.Dataset):
     """Cluster dataset."""
     # Initialize class and load data
-    def __init__(self, npz_file, Normalize=True, arrsize=20):
+    def __init__(self, npz_file, Normalize=True, INSTANCE_NOISE=True, arrsize=20):
         """
         Args:
             npz_file (string): Path to the npz file.
@@ -121,6 +125,7 @@ class ClusterDataset_Full(utils.Dataset):
         self.PartPhi = self.data['PartPhi']
         self.PartIsPrimary = self.data['PartIsPrimary']
         self.PartPID = self.data['PartPID']
+        self.INSTANCE_NOISE = INSTANCE_NOISE
         self.Normalize = Normalize
         if self.Normalize:
             self.minData, self.maxData = load_Normalization_Data()
@@ -183,6 +188,12 @@ class ClusterDataset_Full(utils.Dataset):
     def __Norm01(self, data, min, max):
         return (data - min) / (max - min)
 
+
+    # ## Instance Noise
+    # https://arxiv.org/abs/1610.04490
+    def __add_instance_noise(self, data, std=0.1):
+        return data + 0.001 * np.random.normal(0, std, data.shape).astype(np.float32)
+
     # Get a single entry from the data, do processing and format output
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
@@ -211,6 +222,9 @@ class ClusterDataset_Full(utils.Dataset):
 
         img = self.__GetCluster(_ClusterN, _ClusterModuleNumber, _ClusterRow, _ClusterCol, _Cluster, _ClusterTiming)
 
+        if self.INSTANCE_NOISE:
+            img = self.__add_instance_noise(img)
+
         features = { "ClusterType" : _ClusterType, "ClusterE" : _ClusterE, "ClusterPt" : _ClusterPt
                     , "ClusterM02" : _ClusterM02, "ClusterM20" : _ClusterM20 , "ClusterDist" : _ClusterDistFromVert}
         labels = { "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
@@ -231,8 +245,8 @@ def load_data_test(path=path.abspath('data_test.npz')):
 
 # Helperfunction for obtaining dataloaders
 def get_dataloader(train_ds, val_ds, bs):
-    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1)
-    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1)
+    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
+    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
     return  dl_train, dl_val
 
 # Helper function for getting the right dimension for input features
@@ -242,11 +256,6 @@ def unsqueeze_features(features):
         features[key] = features[key].view(-1,1)
     return features
 
-### Add Instance Noise to training image, can improve training
-# https://arxiv.org/abs/1610.04490
-INSTANCE_NOISE = True
-def add_instance_noise(data, device, std=0.01):
-    return data + 0.001 * torch.distributions.Normal(0, std).sample(data.shape).to(device)
 
 ################################################################################
 
@@ -315,21 +324,16 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
     # Loop through the dataset
     for batch, Data in enumerate(dataloader):
-        Clusters = Data[0].to(device)
         Features = unsqueeze_features(Data[1])
-        Labels = Data[2]
+        Clusters = Data[0].to(device, non_blocking=non_blocking)
 
-        # add instance noise to cluster
-        if INSTANCE_NOISE:
-            Clusters = add_instance_noise(Clusters, device)
+        #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
+        Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
         # Add all additional features into a single tensor
         ClusterProperties = torch.cat([Features["ClusterE"]
             , Features["ClusterPt"], Features["ClusterM02"]
-            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
-
-        #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-        Label = Labels["PartPID"].to(device)
+            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=non_blocking)
 
         # zero parameter gradients
         optimizer.zero_grad()
@@ -360,13 +364,12 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
     for batch, Data in enumerate(dataloader):
         with torch.no_grad():
-            Clusters = Data[0].to(device)
             Features = unsqueeze_features(Data[1])
-            Labels = Data[2]
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
+
             ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
-            #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-            Label = Labels["PartPID"].to(device)
+                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=non_blocking)
 
             pred = model(Clusters, ClusterProperties)
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
@@ -378,7 +381,7 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     # Save a checkpoint. It is automatically registered with Ray Tune and will
     # potentially be passed as the `checkpoint_dir`parameter in future
     # iterations.
-    if epoch % grace_period-1 == 0:
+    if epoch % (grace_period+1) == 0:
         with tune.checkpoint_dir(epoch) as checkpoint_dir:
             _path = path.join(checkpoint_dir, "checkpoint")
             torch.save((model.state_dict(), optimizer.state_dict()), _path)
@@ -397,21 +400,20 @@ def test_accuracy(model, device="cpu"):
     dataset_test = load_data_test()
     #get dataloader
     dataloader_test = utils.DataLoader(
-        dataset_test, batch_size=32, shuffle=False, num_workers=cpu_count()-1)
+        dataset_test, batch_size=32, shuffle=False, num_workers=cpu_count()-1, pin_memory=pin_memory)
 
     correct = 0
     total = len(dataloader_test.dataset)
 
     with torch.no_grad():
         for batch, Data in enumerate(dataloader_test):
-            Clusters = Data[0].to(device)
             Features = unsqueeze_features(Data[1])
-            Labels = Data[2]
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
+
             ClusterProperties = torch.cat([Features["ClusterE"]
             , Features["ClusterPt"], Features["ClusterM02"]
-            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
-            #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-            Label = Labels["PartPID"].to(device)
+            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=non_blocking)
 
 
             pred = model(Clusters, ClusterProperties)
@@ -525,7 +527,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
         scheduler=scheduler,
         progress_reporter=reporter,
         checkpoint_score_attr="accuracy",
-        keep_checkpoints_num=4)
+        keep_checkpoints_num=2)
 
     # Find best trial and use it on the testset
     best_trial = result.get_best_trial("loss", "min", "last")

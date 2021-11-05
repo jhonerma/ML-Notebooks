@@ -43,16 +43,20 @@ gpus_per_trial = 0.33333
 # num_epochs gives the maximum number of training epochs
 # grace_period controls after how many epochs trials will be terminated
 # num_random_trials is the number of random searches to probe the loss function
+# pin_memory and non_blocking can increase performance when loading data from cpu
+# to gpu, set to False when training without gpu
 num_trials = 50
 num_epochs = 50
 grace_period = 5
 num_random_trials = 20
 Use_Shared_Memory = True
+pin_memory = False
+non_blocking = False
 ################################################################################
 
 def get_dataloader(train_ds, val_ds, bs):
-    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=True)
-    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=True)
+    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
+    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
     return  dl_train, dl_val
 
 
@@ -193,15 +197,15 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     # Loop through the dataset
     for batch, Data in enumerate(dataloader):
         Features = cm.unsqueeze_features(Data[1])
-        Clusters = Data[0].to(device, non_blocking=True)
+        Clusters = Data[0].to(device, non_blocking=non_blocking)
 
         #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-        Label = Data[2]["PartPID"].to(device, non_blocking=True)
+        Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
         # Add all additional features into a single tensor
         ClusterProperties = torch.cat([Features["ClusterE"]
             , Features["ClusterPt"], Features["ClusterM02"]
-            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=True)
+            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=non_blocking)
 
         # zero parameter gradients
         optimizer.zero_grad()
@@ -233,11 +237,11 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     for batch, Data in enumerate(dataloader):
         with torch.no_grad():
             Features = cm.unsqueeze_features(Data[1])
-            Clusters = Data[0].to(device, non_blocking=True)
-            Label = Data[2]["PartPID"].to(device, non_blocking=True)
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
             ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=True)
+                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=non_blocking)
             #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
 
 
@@ -272,7 +276,7 @@ def test_accuracy(model, device="cpu"):
 
     #get dataloader
     dataloader_test = utils.DataLoader(
-        dataset_test, batch_size=64, shuffle=False, num_workers=cpu_count()-1, pin_memory=True)
+        dataset_test, batch_size=64, shuffle=False, num_workers=cpu_count()-1, pin_memory=pin_memory)
 
     correct = 0
     total = len(dataloader_test.dataset)
@@ -280,12 +284,12 @@ def test_accuracy(model, device="cpu"):
     with torch.no_grad():
         for batch, Data in enumerate(dataloader_test):
             Features = cm.unsqueeze_features(Data[1])
-            Clusters = Data[0].to(device, non_blocking=True)
-            Label = Data[2]["PartPID"].to(device, non_blocking=True)
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
             ClusterProperties = torch.cat([Features["ClusterE"]
             , Features["ClusterPt"], Features["ClusterM02"]
-            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=True)
+            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=non_blocking)
             #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
 
             pred = model(Clusters, ClusterProperties)
