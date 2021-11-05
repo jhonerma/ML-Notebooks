@@ -37,7 +37,7 @@ import ClassModule as cm
 # networks on a GPU simultaneously. GPU needs enough memory to hold all models,
 # check memory consumption of model on the GPU in advance
 cpus_per_trial = 2
-gpus_per_trial = 0
+gpus_per_trial = 0.33333
 
 # From the given searchspace num_trials configurations will be sampled.
 # num_epochs gives the maximum number of training epochs
@@ -51,16 +51,11 @@ Use_Shared_Memory = True
 ################################################################################
 
 def get_dataloader(train_ds, val_ds, bs):
-    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1)
-    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1)
+    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=True)
+    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=True)
     return  dl_train, dl_val
 
 
-# ## Instance Noise
-# https://arxiv.org/abs/1610.04490
-INSTANCE_NOISE = True
-def add_instance_noise(data, device, std=0.1):
-    return data + 0.001 * torch.distributions.Normal(0, std).sample(data.shape).to(device)
 
 
 ################################################################################
@@ -102,7 +97,7 @@ class ResidualBlock(nn.Module):
 
 
 class CNN(nn.Module):
-    def __init__(self, l1, l2, l3, l4, l5, l6, input_dim=(2,20,20), num_in_features=5):
+    def __init__(self, l1, l2, l3, l4, input_dim=(2,20,20), num_in_features=5):
         super(CNN, self).__init__()
 
         self.block1 = nn.Sequential(
@@ -147,11 +142,7 @@ class CNN(nn.Module):
             nn.SiLU(),
             nn.Linear(l3, l4),
             nn.SiLU(),
-            nn.Linear(l4, l5),
-            nn.SiLU(),
-            nn.Linear(l5, l6),
-            nn.SiLU(),
-            nn.Linear(l6,3),
+            nn.Linear(l4,3),
             nn.SiLU()
         )
 
@@ -162,7 +153,7 @@ class CNN(nn.Module):
         #print(f"After block2 {x.shape}")
         x = self.block3(x)
         #print(f"After block3 {x.shape}")
-        x = self.block4(x)
+        #x = self.block4(x)
         #print(f"After block4 {x.shape}")
         #x = self.block5(x)
         #print(f"After block5 {x.shape}")
@@ -175,7 +166,7 @@ class CNN(nn.Module):
         x = self.block1(cluster)
         x = self.block2(x)
         x = self.block3(x)
-        x = self.block4(x)
+        #x = self.block4(x)
         #x = self.block5(x)
         x = self.avgpool(x)
         x = self.flatten(x)
@@ -201,21 +192,18 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
     # Loop through the dataset
     for batch, Data in enumerate(dataloader):
-        Clusters = Data[0].to(device)
+        Clusters = Data[0].to(device, non_blocking=True)
         Features = cm.unsqueeze_features(Data[1])
         Labels = Data[2]
 
-        # add instance noise to cluster
-        if INSTANCE_NOISE:
-            Clusters = add_instance_noise(Clusters, device)
 
         # Add all additional features into a single tensor
         ClusterProperties = torch.cat([Features["ClusterE"]
             , Features["ClusterPt"], Features["ClusterM02"]
-            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
+            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=True)
 
         #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-        Label = Labels["PartPID"].to(device)
+        Label = Labels["PartPID"].to(device, non_blocking=True)
 
         # zero parameter gradients
         optimizer.zero_grad()
@@ -246,13 +234,13 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
     for batch, Data in enumerate(dataloader):
         with torch.no_grad():
-            Clusters = Data[0].to(device)
+            Clusters = Data[0].to(device, non_blocking=True)
             Features = cm.unsqueeze_features(Data[1])
             Labels = Data[2]
             ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
+                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=True)
             #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-            Label = Labels["PartPID"].to(device)
+            Label = Labels["PartPID"].to(device, non_blocking=True)
 
             pred = model(Clusters, ClusterProperties)
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
@@ -285,21 +273,21 @@ def test_accuracy(model, device="cpu"):
 
     #get dataloader
     dataloader_test = utils.DataLoader(
-        dataset_test, batch_size=32, shuffle=False, num_workers=cpu_count()-1)
+        dataset_test, batch_size=64, shuffle=False, num_workers=cpu_count()-1, pin_memory=True)
 
     correct = 0
     total = len(dataloader_test.dataset)
 
     with torch.no_grad():
         for batch, Data in enumerate(dataloader_test):
-            Clusters = Data[0].to(device)
+            Clusters = Data[0].to(device, non_blocking=True)
             Features = cm.unsqueeze_features(Data[1])
             Labels = Data[2]
             ClusterProperties = torch.cat([Features["ClusterE"]
             , Features["ClusterPt"], Features["ClusterM02"]
-            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
+            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=True)
             #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-            Label = Labels["PartPID"].to(device)
+            Label = Labels["PartPID"].to(device, non_blocking=True)
 
 
             pred = model(Clusters, ClusterProperties)
@@ -316,7 +304,7 @@ def test_accuracy(model, device="cpu"):
 def train_model(config, data=None, checkpoint_dir=None):
 
     # load model
-    model = CNN(config["l1"],config["l2"],config["l3"], config["l4"], config["l5"], config["l6"])
+    model = CNN(config["l1"],config["l2"],config["l3"], config["l4"])
 
     # check for avlaible resource and initialize device
     device = "cpu"
@@ -373,15 +361,13 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
 
     # Setup hyperparameter-space to search
     config = {
-        "l1": tune.qlograndint(1250, 2500, 2),
-        "l2": tune.qlograndint(625, 1250, 2),
-        "l3": tune.qlograndint(300, 625, 2),
-        "l4": tune.qlograndint(150, 300, 2),
-        "l5": tune.qlograndint(75, 150, 2),
-        "l6": tune.qlograndint(12, 75, 2),
+        "l1": tune.qlograndint(500, 1000, 2), #(500, 1000, 2),
+        "l2": tune.qlograndint(250, 500, 2), #(250, 500, 2),
+        "l3": tune.qlograndint(50, 250, 2), #(50, 250, 2),
+        "l4": tune.qlograndint(9, 50, 2), #(9, 50, 2),
         "lr": tune.loguniform(1e-4, 1e-1),
         "wd": tune.loguniform(1e-5, 1e-3),
-        "batch_size": tune.choice([32, 64, 128, 256, 512])
+        "batch_size": tune.choice([32,64,128,256])
     }
 
     # Init the scheduler
@@ -398,7 +384,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
 
     # Init the Reporter, used for printing the relevant informations
     reporter = CLIReporter(
-        parameter_columns=["l1", "l2", "l3", "l4", "l5", "l6", "lr","wd", "batch_size"],
+        parameter_columns=["l1", "l2", "l3", "l4", "lr","wd", "batch_size"],
         metric_columns=["loss", "accuracy", "training_iteration"])
 
     #Get Current date and time for checkpoint folder
@@ -434,7 +420,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
     print(f"Best trial final validation loss: {best_trial.last_result['loss']}")
     print(f"Best trial final validation accuracy: {best_trial.last_result['accuracy']}")
     # Adjust the input for your model here
-    best_trained_model = CNN(best_trial.config["l1"], best_trial.config["l2"], best_trial.config["l3"], best_trial.config["l4"], best_trial.config["l5"], best_trial.config["l6"])
+    best_trained_model = CNN(best_trial.config["l1"], best_trial.config["l2"], best_trial.config["l3"], best_trial.config["l4"])
     device = "cpu"
     if torch.cuda.is_available():
         device = "cuda:0"
