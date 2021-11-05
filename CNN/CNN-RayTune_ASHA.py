@@ -43,10 +43,10 @@ gpus_per_trial = 0.33333
 # num_epochs gives the maximum number of training epochs
 # grace_period controls after how many epochs trials will be terminated
 # num_random_trials is the number of random searches to probe the loss function
-num_trials = 12
-num_epochs = 3
-grace_period = 1
-num_random_trials = 6
+num_trials = 50
+num_epochs = 50
+grace_period = 5
+num_random_trials = 20
 Use_Shared_Memory = True
 ################################################################################
 
@@ -192,18 +192,16 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
     # Loop through the dataset
     for batch, Data in enumerate(dataloader):
-        Clusters = Data[0].to(device, non_blocking=True)
         Features = cm.unsqueeze_features(Data[1])
-        Labels = Data[2]
+        Clusters = Data[0].to(device, non_blocking=True)
 
+        #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
+        Label = Data[2]["PartPID"].to(device, non_blocking=True)
 
         # Add all additional features into a single tensor
         ClusterProperties = torch.cat([Features["ClusterE"]
             , Features["ClusterPt"], Features["ClusterM02"]
             , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=True)
-
-        #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-        Label = Labels["PartPID"].to(device, non_blocking=True)
 
         # zero parameter gradients
         optimizer.zero_grad()
@@ -234,13 +232,14 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
     for batch, Data in enumerate(dataloader):
         with torch.no_grad():
-            Clusters = Data[0].to(device, non_blocking=True)
             Features = cm.unsqueeze_features(Data[1])
-            Labels = Data[2]
+            Clusters = Data[0].to(device, non_blocking=True)
+            Label = Data[2]["PartPID"].to(device, non_blocking=True)
+
             ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
                                       , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=True)
             #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-            Label = Labels["PartPID"].to(device, non_blocking=True)
+
 
             pred = model(Clusters, ClusterProperties)
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
@@ -280,15 +279,14 @@ def test_accuracy(model, device="cpu"):
 
     with torch.no_grad():
         for batch, Data in enumerate(dataloader_test):
-            Clusters = Data[0].to(device, non_blocking=True)
             Features = cm.unsqueeze_features(Data[1])
-            Labels = Data[2]
+            Clusters = Data[0].to(device, non_blocking=True)
+            Label = Data[2]["PartPID"].to(device, non_blocking=True)
+
             ClusterProperties = torch.cat([Features["ClusterE"]
             , Features["ClusterPt"], Features["ClusterM02"]
             , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=True)
             #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-            Label = Labels["PartPID"].to(device, non_blocking=True)
-
 
             pred = model(Clusters, ClusterProperties)
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
