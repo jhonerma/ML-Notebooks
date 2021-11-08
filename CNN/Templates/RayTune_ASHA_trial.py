@@ -63,12 +63,14 @@ gpus_per_trial = 0
 # num_random_trials is the number of random searches to probe the loss function
 # pin_memory and non_blocking can increase performance when loading data from cpu
 # to gpu, set to False when training without gpu
+# Instance noise can improve training with images
 num_trials = 6
 num_epochs = 3
 grace_period = 1
 num_random_trials = 6
 pin_memory = False
 non_blocking = False
+INSTANCE_NOISE = True
 ################################################################################
 
 
@@ -100,7 +102,7 @@ def load_Normalization_Data(path=path.abspath('normalization.npz')):
 class ClusterDataset_Full(utils.Dataset):
     """Cluster dataset."""
     # Initialize class and load data
-    def __init__(self, npz_file, Normalize=True, INSTANCE_NOISE=True, arrsize=20):
+    def __init__(self, npz_file, Normalize=True, arrsize=20):
         """
         Args:
             npz_file (string): Path to the npz file.
@@ -125,7 +127,6 @@ class ClusterDataset_Full(utils.Dataset):
         self.PartPhi = self.data['PartPhi']
         self.PartIsPrimary = self.data['PartIsPrimary']
         self.PartPID = self.data['PartPID']
-        self.INSTANCE_NOISE = INSTANCE_NOISE
         self.Normalize = Normalize
         if self.Normalize:
             self.minData, self.maxData = load_Normalization_Data()
@@ -188,12 +189,6 @@ class ClusterDataset_Full(utils.Dataset):
     def __Norm01(self, data, min, max):
         return (data - min) / (max - min)
 
-
-    # ## Instance Noise
-    # https://arxiv.org/abs/1610.04490
-    def __add_instance_noise(self, data, std=0.1):
-        return data + 0.001 * np.random.normal(0, std, data.shape).astype(np.float32)
-
     # Get a single entry from the data, do processing and format output
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
@@ -222,12 +217,9 @@ class ClusterDataset_Full(utils.Dataset):
 
         img = self.__GetCluster(_ClusterN, _ClusterModuleNumber, _ClusterRow, _ClusterCol, _Cluster, _ClusterTiming)
 
-        if self.INSTANCE_NOISE:
-            img = self.__add_instance_noise(img)
-
-        features = { "ClusterType" : _ClusterType, "ClusterE" : _ClusterE, "ClusterPt" : _ClusterPt
+        features = { "ClusterE" : _ClusterE, "ClusterPt" : _ClusterPt
                     , "ClusterM02" : _ClusterM02, "ClusterM20" : _ClusterM20 , "ClusterDist" : _ClusterDistFromVert}
-        labels = { "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
+        labels = { "ClusterType" : _ClusterType, "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
                   , "PartIsPrimary" : _PartIsPrimary, "PartPID" : _PartPID }
 
         return (img, features, labels)
@@ -255,6 +247,11 @@ def unsqueeze_features(features):
     for key in features.keys():
         features[key] = features[key].view(-1,1)
     return features
+
+# ## Instance Noise
+# https://arxiv.org/abs/1610.04490
+def add_instance_noise(data, std=0.1):
+    return data + 0.001 * torch.distributions.Normal(0, std).sample(data.shape)
 
 
 ################################################################################
@@ -325,7 +322,10 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     # Loop through the dataset
     for batch, Data in enumerate(dataloader):
         Features = unsqueeze_features(Data[1])
-        Clusters = Data[0].to(device, non_blocking=non_blocking)
+        if INSTANCE_NOISE:
+            Clusters = add_instance_noise(Data[0]).to(device, non_blocking=non_blocking)
+        else:
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
 
         #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
         Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)

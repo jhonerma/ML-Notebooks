@@ -39,23 +39,20 @@ gpus_per_trial = 0
 # num_trials gives the size of the population, i.e. number of different trials
 # num_epochs gives the maximum number of training epochs
 # perturbation_interval controls after how many epochs bad performers change HP
+# pin_memory and non_blocking can increase performance when loading data from cpu
+# to gpu, set to False when training without gpu
 num_trials = 4
 num_epochs = 5
 perturbation_interval = 2
 Use_Shared_Memory = True
+pin_memory = False
+non_blocking = False
 ################################################################################
 
 def get_dataloader(train_ds, val_ds, bs):
-    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1)
-    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1)
+    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
+    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
     return  dl_train, dl_val
-
-
-### Add Instance Noise to training image, can improve training
-# https://arxiv.org/abs/1610.04490
-INSTANCE_NOISE = True
-def add_instance_noise(data, device, std=0.01):
-    return data + 0.001 * torch.distributions.Normal(0, std).sample(data.shape).to(device)
 
 
 ################################################################################
@@ -127,20 +124,16 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     epoch_steps = 0
 
     for batch, Data in enumerate(dataloader):
-        Clusters = Data[0].to(device)
-        Features = cm.unsqueeze_features(Data[1])
-        Labels = Data[2]
+        Features = unsqueeze_features(Data[1])
+        Clusters = Data[0].to(device, non_blocking=non_blocking)
 
-        # add instance noise to cluster
-        if INSTANCE_NOISE:
-            Clusters = add_instance_noise(Clusters, device)
+        #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
+        Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
         # Add all additional features into a single tensor
         ClusterProperties = torch.cat([Features["ClusterE"]
             , Features["ClusterPt"], Features["ClusterM02"]
-            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
-        #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-        Label = Labels["PartPID"].to(device)
+            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=non_blocking)
 
         # zero parameter gradients
         optimizer.zero_grad()
