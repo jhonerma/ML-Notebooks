@@ -36,22 +36,22 @@ import ClassModule as cm
 # simultaneously on GPU. Fractional values are possible, i.e. 0.5 will train 2
 # networks on a GPU simultaneously. GPU needs enough memory to hold all models,
 # check memory consumption of model on the GPU in advance
-cpus_per_trial = 2
-gpus_per_trial = 0.33333
-
+cpus_per_trial = 4
+gpus_per_trial = 0
 # From the given searchspace num_trials configurations will be sampled.
 # num_epochs gives the maximum number of training epochs
 # grace_period controls after how many epochs trials will be terminated
 # num_random_trials is the number of random searches to probe the loss function
 # pin_memory and non_blocking can increase performance when loading data from cpu
 # to gpu, set to False when training without gpu
-num_trials = 50
-num_epochs = 50
-grace_period = 5
-num_random_trials = 20
+num_trials = 3
+num_epochs = 3
+grace_period = 1
+num_random_trials = 1
 Use_Shared_Memory = True
 pin_memory = False
 non_blocking = False
+INSTANCE_NOISE = True
 ################################################################################
 
 def get_dataloader(train_ds, val_ds, bs):
@@ -197,7 +197,10 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     # Loop through the dataset
     for batch, Data in enumerate(dataloader):
         Features = cm.unsqueeze_features(Data[1])
-        Clusters = Data[0].to(device, non_blocking=non_blocking)
+        if INSTANCE_NOISE:
+            Clusters = cm.add_instance_noise(Data[0]).to(device, non_blocking=non_blocking)
+        else:
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
 
         #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
         Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
@@ -255,7 +258,7 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     # Save a checkpoint. It is automatically registered with Ray Tune and will
     # potentially be passed as the `checkpoint_dir`parameter in future
     # iterations.
-    if epoch % grace_period-1 == 0:
+    if epoch % (grace_period+1) == 0:
         with tune.checkpoint_dir(epoch) as checkpoint_dir:
             _path = path.join(checkpoint_dir, "checkpoint")
             torch.save((model.state_dict(), optimizer.state_dict()), _path)

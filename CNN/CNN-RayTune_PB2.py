@@ -33,7 +33,7 @@ import ClassModule as cm
 # simultaneously on GPU. Fractional values are possible, i.e. 0.5 will train 2
 # networks on a GPU simultaneously. GPU needs enough memory to hold all models,
 # check memory consumption of model on the GPU in advance
-cpus_per_trial = 2
+cpus_per_trial = 4
 gpus_per_trial = 0
 
 # num_trials gives the size of the population, i.e. number of different trials
@@ -41,12 +41,14 @@ gpus_per_trial = 0
 # perturbation_interval controls after how many epochs bad performers change HP
 # pin_memory and non_blocking can increase performance when loading data from cpu
 # to gpu, set to False when training without gpu
-num_trials = 4
-num_epochs = 5
+# Instance noise can improve training with images
+num_trials = 3
+num_epochs = 4
 perturbation_interval = 2
 Use_Shared_Memory = True
 pin_memory = False
 non_blocking = False
+INSTANCE_NOISE = True
 ################################################################################
 
 def get_dataloader(train_ds, val_ds, bs):
@@ -124,8 +126,11 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     epoch_steps = 0
 
     for batch, Data in enumerate(dataloader):
-        Features = unsqueeze_features(Data[1])
-        Clusters = Data[0].to(device, non_blocking=non_blocking)
+        Features = cm.unsqueeze_features(Data[1])
+        if INSTANCE_NOISE:
+            Clusters = cm.add_instance_noise(Data[0]).to(device, non_blocking=non_blocking)
+        else:
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
 
         #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
         Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
@@ -165,13 +170,11 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
     for batch, Data in enumerate(dataloader):
         with torch.no_grad():
-            Clusters = Data[0].to(device)
             Features = cm.unsqueeze_features(Data[1])
-            Labels = Data[2]
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
             ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
-            #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-            Label = Labels["PartPID"].to(device)
+                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=non_blocking)
 
             pred = model(Clusters, ClusterProperties)
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
@@ -206,21 +209,18 @@ def test_accuracy(model, device="cpu"):
 
     #get dataloader
     dataloader_test = utils.DataLoader(
-        dataset_test, batch_size=32, shuffle=False, num_workers=cpu_count()-1)
+        dataset_test, batch_size=32, shuffle=False, num_workers=cpu_count()-1, pin_memory=pin_memory)
 
     correct = 0
     total = len(dataloader_test.dataset)
 
     with torch.no_grad():
         for batch, Data in enumerate(dataloader_test):
-            Clusters = Data[0].to(device)
             Features = cm.unsqueeze_features(Data[1])
-            Labels = Data[2]
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
             ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
-            #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-            Label = Labels["PartPID"].to(device)
-
+                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=non_blocking)
 
             pred = model(Clusters, ClusterProperties)
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
