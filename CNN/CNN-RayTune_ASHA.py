@@ -42,8 +42,11 @@ gpus_per_trial = 0
 # num_epochs gives the maximum number of training epochs
 # grace_period controls after how many epochs trials will be terminated
 # num_random_trials is the number of random searches to probe the loss function
+# set_to_none puts gradients to None instead of 0, can result in speed-up
 # pin_memory and non_blocking can increase performance when loading data from cpu
 # to gpu, set to False when training without gpu
+# use cudnn.benchmark when you rely on convolutions and have constant input shape
+# Instance noise can improve training with images
 num_trials = 3
 num_epochs = 3
 grace_period = 1
@@ -233,8 +236,8 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     correct = 0
     size = len(dataloader.dataset)
 
-    for batch, Data in enumerate(dataloader):
-        with torch.no_grad():
+    with torch.no_grad():
+        for batch, Data in enumerate(dataloader):
             Clusters = Data[0].to(device, non_blocking=non_blocking)
             Features = Data[1].to(device, non_blocking=non_blocking)
             Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
