@@ -33,7 +33,7 @@ import ClassModule as cm
 # simultaneously on GPU. Fractional values are possible, i.e. 0.5 will train 2
 # networks on a GPU simultaneously. GPU needs enough memory to hold all models,
 # check memory consumption of model on the GPU in advance
-cpus_per_trial = 4
+cpus_per_trial = 3
 gpus_per_trial = 0
 
 # num_trials gives the size of the population, i.e. number of different trials
@@ -42,12 +42,14 @@ gpus_per_trial = 0
 # pin_memory and non_blocking can increase performance when loading data from cpu
 # to gpu, set to False when training without gpu
 # Instance noise can improve training with images
-num_trials = 3
-num_epochs = 4
+num_trials = 4
+num_epochs = 6
 perturbation_interval = 2
 Use_Shared_Memory = True
+set_to_none = True
 pin_memory = False
 non_blocking = False
+torch.backends.cudnn.benchmark = False
 INSTANCE_NOISE = True
 ################################################################################
 
@@ -121,30 +123,25 @@ class CNN(nn.Module):
 # function unsqueeze features here. Data[2] contains all labels
 def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
-    size = len(dataloader.dataset)
+    size = len(dataloader)
+    output_frequency = int(0.1 * size)
     running_loss = 0.0
     epoch_steps = 0
 
     for batch, Data in enumerate(dataloader):
-        Features = cm.unsqueeze_features(Data[1])
         if INSTANCE_NOISE:
             Clusters = cm.add_instance_noise(Data[0]).to(device, non_blocking=non_blocking)
         else:
             Clusters = Data[0].to(device, non_blocking=non_blocking)
 
-        #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
+        Features = Data[1].to(device, non_blocking=non_blocking)
         Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
-        # Add all additional features into a single tensor
-        ClusterProperties = torch.cat([Features["ClusterE"]
-            , Features["ClusterPt"], Features["ClusterM02"]
-            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=non_blocking)
-
         # zero parameter gradients
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=set_to_none)
 
         # prediction and loss
-        pred = model(Clusters, ClusterProperties)
+        pred = model(Clusters, Features)
         loss = loss_fn(pred, Label.long())
 
         # Backpropagation
@@ -154,8 +151,9 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         running_loss += loss.item()
         epoch_steps += 1
 
-        if batch % 10000 == 9999:
-            print(f"[Epoch {epoch+1:d}, Batch {batch+1:5d}]" \
+        if batch % output_frequency == 0 and batch > 0:
+            print(f"[Epoch {epoch+1:d}/{num_epochs:d},"\
+                  f"Batch {batch+1:5d}/{size}]" \
                   f" loss: {running_loss/epoch_steps:.3f}")
             running_loss = 0.0
 
@@ -170,13 +168,11 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
     for batch, Data in enumerate(dataloader):
         with torch.no_grad():
-            Features = cm.unsqueeze_features(Data[1])
             Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Features = Data[1].to(device, non_blocking=non_blocking)
             Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
-            ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=non_blocking)
 
-            pred = model(Clusters, ClusterProperties)
+            pred = model(Clusters, Features)
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
 
             loss = loss_fn(pred, Label.long())#.item()
@@ -216,13 +212,11 @@ def test_accuracy(model, device="cpu"):
 
     with torch.no_grad():
         for batch, Data in enumerate(dataloader_test):
-            Features = cm.unsqueeze_features(Data[1])
             Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Features = Data[1].to(device, non_blocking=non_blocking)
             Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
-            ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=non_blocking)
 
-            pred = model(Clusters, ClusterProperties)
+            pred = model(Clusters, Features)
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
 
     return correct / total

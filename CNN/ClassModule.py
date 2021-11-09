@@ -88,6 +88,7 @@ class ClusterDataset(utils.Dataset):
 
     # If normalize is true return normalized feature otherwise return feature
     def __Normalize(self, feature, min, max):
+        feature = np.atleast_1d(feature)
         if self.Normalize:
             return self.__Norm01(feature, min, max)
         else:
@@ -125,8 +126,9 @@ class ClusterDataset(utils.Dataset):
 
         img = self.__GetCluster(_ClusterN, _ClusterModuleNumber, _ClusterRow, _ClusterCol, _Cluster, _ClusterTiming)
 
-        features = {  "ClusterE" : _ClusterE, "ClusterPt" : _ClusterPt
-                    , "ClusterM02" : _ClusterM02, "ClusterM20" : _ClusterM20 , "ClusterDist" : _ClusterDistFromVert}
+        # Stack the features in a single array
+        features = np.concatenate((_ClusterE, _ClusterPt, _ClusterM02, _ClusterM20, _ClusterDistFromVert))
+
         labels = { "ClusterType" : _ClusterType, "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
                   , "PartIsPrimary" : _PartIsPrimary, "PartPID" : _PartPID }
 
@@ -218,6 +220,7 @@ class ClusterDataset_Full(utils.Dataset):
 
     # If normalize is true return normalized feature otherwise return feature
     def __Normalize(self, feature, min, max):
+        feature = np.atleast_1d(feature)
         if self.Normalize:
             return self.__Norm01(feature, min, max)
         else:
@@ -255,9 +258,9 @@ class ClusterDataset_Full(utils.Dataset):
 
         img = self.__GetCluster(_ClusterN, _ClusterModuleNumber, _ClusterRow, _ClusterCol, _Cluster, _ClusterTiming)
 
+        # Stack the features in a single array
+        features = np.concatenate((_ClusterE, _ClusterPt, _ClusterM02, _ClusterM20, _ClusterDistFromVert))
 
-        features = { "ClusterE" : _ClusterE, "ClusterPt" : _ClusterPt
-                    , "ClusterM02" : _ClusterM02, "ClusterM20" : _ClusterM20 , "ClusterDist" : _ClusterDistFromVert}
         labels = { "ClusterType" : _ClusterType, "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
                   , "PartIsPrimary" : _PartIsPrimary, "PartPID" : _PartPID }
 
