@@ -41,6 +41,7 @@ gpus_per_trial = 0
 # From the given searchspace num_trials configurations will be sampled.
 # num_epochs gives the maximum number of training epochs
 # grace_period controls after how many epochs trials will be terminated
+# reduction_factor controls how many models should be stopped after grace_period
 # num_random_trials is the number of random searches to probe the loss function
 # set_to_none puts gradients to None instead of 0, can result in speed-up
 # pin_memory and non_blocking can increase performance when loading data from cpu
@@ -50,6 +51,7 @@ gpus_per_trial = 0
 num_trials = 3
 num_epochs = 3
 grace_period = 1
+reduction_factor = 4
 num_random_trials = 1
 Use_Shared_Memory = True
 set_to_none = False
@@ -142,15 +144,15 @@ class CNN(nn.Module):
 
         self.dense_nn = nn.Sequential(
             nn.Linear(num_features_after_conv + num_in_features, l1),
-            nn.SiLU(),
+            nn.SiLU(True),
             nn.Linear(l1, l2),
-            nn.SiLU(),
+            nn.SiLU(True),
             nn.Linear(l2, l3),
-            nn.SiLU(),
+            nn.SiLU(True),
             nn.Linear(l3, l4),
-            nn.SiLU(),
+            nn.SiLU(True),
             nn.Linear(l4,3),
-            nn.SiLU()
+            nn.SiLU(True)
         )
 
     def __calc_features(self, input_dim):
@@ -197,6 +199,7 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     output_frequency = int(0.1 * size)
     running_loss = 0.0
     epoch_steps = 0
+    model.train()
 
     # Loop through the dataset
     for batch, Data in enumerate(dataloader):
@@ -235,6 +238,7 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     total = 0
     correct = 0
     size = len(dataloader.dataset)
+    model.eval()
 
     with torch.no_grad():
         for batch, Data in enumerate(dataloader):
@@ -277,6 +281,7 @@ def test_accuracy(model, device="cpu"):
 
     correct = 0
     total = len(dataloader_test.dataset)
+    model.eval()
 
     with torch.no_grad():
         for batch, Data in enumerate(dataloader_test):
@@ -368,7 +373,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
     scheduler = ASHAScheduler(
         max_t=max_num_epochs,
         grace_period=grace_period,
-        reduction_factor=2)
+        reduction_factor=reduction_factor)
 
     # Init the search algorithm
     searchalgorithm = HyperOptSearch(n_initial_points=num_random_trials)

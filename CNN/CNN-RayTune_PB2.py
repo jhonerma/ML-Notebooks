@@ -129,6 +129,7 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     output_frequency = int(0.1 * size)
     running_loss = 0.0
     epoch_steps = 0
+    model.train()
 
     for batch, Data in enumerate(dataloader):
         if INSTANCE_NOISE:
@@ -167,6 +168,7 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     total = 0
     correct = 0
     size = len(dataloader.dataset)
+    model.eval()
 
     with torch.no_grad():
         for batch, Data in enumerate(dataloader):
@@ -211,6 +213,7 @@ def test_accuracy(model, device="cpu"):
 
     correct = 0
     total = len(dataloader_test.dataset)
+    model.eval()
 
     with torch.no_grad():
         for batch, Data in enumerate(dataloader_test):
