@@ -26,7 +26,7 @@ import ClassModule as cm
 
 ################################################################################
 ########################### Run Configuratinos #################################
-# Set the number CPUS that should be used per trial and dataloader. The number
+# Set the number CPUS that should be used per trial. The number
 # of concurrent trials is the minimum of 6 or the number of avlaible cores
 # divided by cpus_per_trial. For the search algorithm to function properly this
 # upper limit is necessary.
@@ -36,8 +36,11 @@ import ClassModule as cm
 # simultaneously on GPU. Fractional values are possible, i.e. 0.5 will train 2
 # networks on a GPU simultaneously. GPU needs enough memory to hold all models,
 # check memory consumption of model on the GPU in advance
+# num_workers controls how many subprocesses for loading a dataloader will spawn
 cpus_per_trial = 4
 gpus_per_trial = 0
+num_workers = 4
+
 # From the given searchspace num_trials configurations will be sampled.
 # num_epochs gives the maximum number of training epochs
 # grace_period controls after how many epochs trials will be terminated
@@ -62,8 +65,8 @@ INSTANCE_NOISE = True
 ################################################################################
 
 def get_dataloader(train_ds, val_ds, bs):
-    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
-    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
+    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=num_workers, pin_memory=pin_memory)
+    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=num_workers, pin_memory=pin_memory)
     return  dl_train, dl_val
 
 
