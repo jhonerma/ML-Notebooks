@@ -31,8 +31,8 @@ def load_Normalization_Data(path=path.abspath('Data/normalization.npz')):
 class ClusterDataset(utils.Dataset):
     """Cluster dataset."""
     # Initialize the class
-    def __init__(self, data=None, Normalize=True, arrsize=20):
 
+    def __init__(self, data=None, Normalize=True, arrsize=20):
         self.data = data
         self.arrsize = arrsize
         self.Normalize = Normalize
