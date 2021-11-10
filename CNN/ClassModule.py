@@ -31,12 +31,11 @@ def load_Normalization_Data(path=path.abspath('Data/normalization.npz')):
 class ClusterDataset(utils.Dataset):
     """Cluster dataset."""
     # Initialize the class
-    def __init__(self, data=None, Normalize=True, INSTANCE_NOISE = False, arrsize=20):
 
+    def __init__(self, data=None, Normalize=True, arrsize=20):
         self.data = data
         self.arrsize = arrsize
         self.Normalize = Normalize
-        self.INSTANCE_NOISE = INSTANCE_NOISE
         if self.Normalize:
             self.minData, self.maxData = load_Normalization_Data()
 
@@ -89,6 +88,7 @@ class ClusterDataset(utils.Dataset):
 
     # If normalize is true return normalized feature otherwise return feature
     def __Normalize(self, feature, min, max):
+        feature = np.atleast_1d(feature)
         if self.Normalize:
             return self.__Norm01(feature, min, max)
         else:
@@ -97,11 +97,6 @@ class ClusterDataset(utils.Dataset):
     # Function for feature normaliztion to the range 0-1
     def __Norm01(self, data, min, max):
         return (data - min) / (max - min)
-
-    # ## Instance Noise
-    # https://arxiv.org/abs/1610.04490
-    def __add_instance_noise(self, data, std=0.1):
-        return data + 0.001 * np.random.normal(0, std, data.shape).astype(np.float32)
 
     # Get a single entry from the data, do processing and format output
     def __getitem__(self, idx):
@@ -131,14 +126,10 @@ class ClusterDataset(utils.Dataset):
 
         img = self.__GetCluster(_ClusterN, _ClusterModuleNumber, _ClusterRow, _ClusterCol, _Cluster, _ClusterTiming)
 
+        # Stack the features in a single array
+        features = np.concatenate((_ClusterE, _ClusterPt, _ClusterM02, _ClusterM20, _ClusterDistFromVert))
 
-        if self.INSTANCE_NOISE:
-            img = self.__add_instance_noise(img)
-
-
-        features = { "ClusterType" : _ClusterType, "ClusterE" : _ClusterE, "ClusterPt" : _ClusterPt
-                    , "ClusterM02" : _ClusterM02, "ClusterM20" : _ClusterM20 , "ClusterDist" : _ClusterDistFromVert}
-        labels = { "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
+        labels = { "ClusterType" : _ClusterType, "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
                   , "PartIsPrimary" : _PartIsPrimary, "PartPID" : _PartPID }
 
         return (img, features, labels)
@@ -151,7 +142,7 @@ class ClusterDataset(utils.Dataset):
 class ClusterDataset_Full(utils.Dataset):
     """Cluster dataset."""
     # Initialize class and load data
-    def __init__(self, npz_file, Normalize=True, INSTANCE_NOISE=True, arrsize=20):
+    def __init__(self, npz_file, Normalize=True, arrsize=20):
         """
         Args:
             npz_file (string): Path to the npz file.
@@ -176,7 +167,6 @@ class ClusterDataset_Full(utils.Dataset):
         self.PartPhi = self.data['PartPhi']
         self.PartIsPrimary = self.data['PartIsPrimary']
         self.PartPID = self.data['PartPID']
-        self.INSTANCE_NOISE = INSTANCE_NOISE
         self.Normalize = Normalize
         if self.Normalize:
             self.minData, self.maxData = load_Normalization_Data()
@@ -230,6 +220,7 @@ class ClusterDataset_Full(utils.Dataset):
 
     # If normalize is true return normalized feature otherwise return feature
     def __Normalize(self, feature, min, max):
+        feature = np.atleast_1d(feature)
         if self.Normalize:
             return self.__Norm01(feature, min, max)
         else:
@@ -238,12 +229,6 @@ class ClusterDataset_Full(utils.Dataset):
     # Function for feature normaliztion to the range 0-1
     def __Norm01(self, data, min, max):
         return (data - min) / (max - min)
-
-
-    # ## Instance Noise
-    # https://arxiv.org/abs/1610.04490
-    def __add_instance_noise(self, data, std=0.1):
-        return data + 0.001 * np.random.normal(0, std, data.shape).astype(np.float32)
 
     # Get a single entry from the data, do processing and format output
     def __getitem__(self, idx):
@@ -273,17 +258,18 @@ class ClusterDataset_Full(utils.Dataset):
 
         img = self.__GetCluster(_ClusterN, _ClusterModuleNumber, _ClusterRow, _ClusterCol, _Cluster, _ClusterTiming)
 
-        if self.INSTANCE_NOISE:
-            img = self.__add_instance_noise(img)
+        # Stack the features in a single array
+        features = np.concatenate((_ClusterE, _ClusterPt, _ClusterM02, _ClusterM20, _ClusterDistFromVert))
 
-        features = { "ClusterType" : _ClusterType, "ClusterE" : _ClusterE, "ClusterPt" : _ClusterPt
-                    , "ClusterM02" : _ClusterM02, "ClusterM20" : _ClusterM20 , "ClusterDist" : _ClusterDistFromVert}
-        labels = { "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
+        labels = { "ClusterType" : _ClusterType, "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
                   , "PartIsPrimary" : _PartIsPrimary, "PartPID" : _PartPID }
 
         return (img, features, labels)
 
-
+### Add Instance Noise to training image, can improve training
+# https://arxiv.org/abs/1610.04490
+def add_instance_noise(data, std=0.1):
+    return data + 0.001 * torch.distributions.Normal(0, std).sample(data.shape)
 
 
 #Helper functions for loading the dataset

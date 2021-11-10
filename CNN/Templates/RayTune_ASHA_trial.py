@@ -60,11 +60,23 @@ gpus_per_trial = 0
 # From the given searchspace num_trials configurations will be sampled.
 # num_epochs gives the maximum number of training epochs
 # grace_period controls after how many epochs trials will be terminated
+# reduction_factor controls how many models should be stopped after grace_period
 # num_random_trials is the number of random searches to probe the loss function
-num_trials = 30
+# set_to_none puts gradients to None instead of 0, can result in speed-up
+# pin_memory and non_blocking can increase performance when loading data from cpu
+# to gpu, set to False when training without gpu
+# use cudnn.benchmark when you rely on convolutions and have constant input shape
+# Instance noise can improve training with images
+num_trials = 6
 num_epochs = 3
 grace_period = 1
-num_random_trials = 20
+reduction_factor = 4
+num_random_trials = 6
+set_to_none = False
+pin_memory = False
+non_blocking = False
+torch.backends.cudnn.benchmark = False
+INSTANCE_NOISE = True
 ################################################################################
 
 
@@ -174,6 +186,7 @@ class ClusterDataset_Full(utils.Dataset):
 
     # If normalize is true return normalized feature otherwise return feature
     def __Normalize(self, feature, min, max):
+        feature = np.atleast_1d(feature)
         if self.Normalize:
             return self.__Norm01(feature, min, max)
         else:
@@ -211,9 +224,10 @@ class ClusterDataset_Full(utils.Dataset):
 
         img = self.__GetCluster(_ClusterN, _ClusterModuleNumber, _ClusterRow, _ClusterCol, _Cluster, _ClusterTiming)
 
-        features = { "ClusterType" : _ClusterType, "ClusterE" : _ClusterE, "ClusterPt" : _ClusterPt
-                    , "ClusterM02" : _ClusterM02, "ClusterM20" : _ClusterM20 , "ClusterDist" : _ClusterDistFromVert}
-        labels = { "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
+        # Stack the features in a single array
+        features = np.concatenate((_ClusterE, _ClusterPt, _ClusterM02, _ClusterM20, _ClusterDistFromVert))
+
+        labels = { "ClusterType" : _ClusterType, "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
                   , "PartIsPrimary" : _PartIsPrimary, "PartPID" : _PartPID }
 
         return (img, features, labels)
@@ -231,22 +245,15 @@ def load_data_test(path=path.abspath('data_test.npz')):
 
 # Helperfunction for obtaining dataloaders
 def get_dataloader(train_ds, val_ds, bs):
-    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1)
-    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1)
+    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
+    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
     return  dl_train, dl_val
 
-# Helper function for getting the right dimension for input features
-# [batch_size, 1] from dimension [batch_size] of data saved in a dict
-def unsqueeze_features(features):
-    for key in features.keys():
-        features[key] = features[key].view(-1,1)
-    return features
-
-### Add Instance Noise to training image, can improve training
+# ## Instance Noise
 # https://arxiv.org/abs/1610.04490
-INSTANCE_NOISE = True
-def add_instance_noise(data, device, std=0.01):
-    return data + 0.001 * torch.distributions.Normal(0, std).sample(data.shape).to(device)
+def add_instance_noise(data, std=0.1):
+    return data + 0.001 * torch.distributions.Normal(0, std).sample(data.shape)
+
 
 ################################################################################
 
@@ -309,33 +316,27 @@ class CNN(nn.Module):
 # function unsqueeze features here. Data[2] contains all labels
 def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
-    size = len(dataloader.dataset)
+    size = len(dataloader)
+    output_frequency = int(0.1 * size)
     running_loss = 0.0
     epoch_steps = 0
+    model.train()
 
     # Loop through the dataset
     for batch, Data in enumerate(dataloader):
-        Clusters = Data[0].to(device)
-        Features = unsqueeze_features(Data[1])
-        Labels = Data[2]
-
-        # add instance noise to cluster
         if INSTANCE_NOISE:
-            Clusters = add_instance_noise(Clusters, device)
+            Clusters = add_instance_noise(Data[0]).to(device, non_blocking=non_blocking)
+        else:
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
 
-        # Add all additional features into a single tensor
-        ClusterProperties = torch.cat([Features["ClusterE"]
-            , Features["ClusterPt"], Features["ClusterM02"]
-            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
-
-        #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-        Label = Labels["PartPID"].to(device)
+        Features = Data[1].to(device, non_blocking=non_blocking)
+        Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
         # zero parameter gradients
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=set_to_none)
 
         # prediction and loss
-        pred = model(Clusters, ClusterProperties)
+        pred = model(Clusters, Features)
         loss = loss_fn(pred, Label.long())
 
         # Backpropagation
@@ -345,8 +346,9 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         running_loss += loss.item()
         epoch_steps += 1
 
-        if batch % 10000 == 9999:
-            print(f"[Epoch {epoch+1:d}, Batch {batch+1:5d}]" \
+        if batch % output_frequency == 0 and batch > 0:
+            print(f"[Epoch {epoch+1:d}/{num_epochs:d},"\
+                  f"Batch {batch+1:5d}/{size}]" \
                   f" loss: {running_loss/epoch_steps:.3f}")
             running_loss = 0.0
 
@@ -357,18 +359,15 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     total = 0
     correct = 0
     size = len(dataloader.dataset)
+    model.eval()
 
-    for batch, Data in enumerate(dataloader):
-        with torch.no_grad():
-            Clusters = Data[0].to(device)
-            Features = unsqueeze_features(Data[1])
-            Labels = Data[2]
-            ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
-            #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-            Label = Labels["PartPID"].to(device)
+    with torch.no_grad():
+        for batch, Data in enumerate(dataloader):
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Features = Data[1].to(device, non_blocking=non_blocking)
+            Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
-            pred = model(Clusters, ClusterProperties)
+            pred = model(Clusters, Features)
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
 
             loss = loss_fn(pred, Label.long())#.item()
@@ -378,7 +377,7 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     # Save a checkpoint. It is automatically registered with Ray Tune and will
     # potentially be passed as the `checkpoint_dir`parameter in future
     # iterations.
-    if epoch % grace_period-1 == 0:
+    if epoch % grace_period == 0:
         with tune.checkpoint_dir(epoch) as checkpoint_dir:
             _path = path.join(checkpoint_dir, "checkpoint")
             torch.save((model.state_dict(), optimizer.state_dict()), _path)
@@ -397,24 +396,19 @@ def test_accuracy(model, device="cpu"):
     dataset_test = load_data_test()
     #get dataloader
     dataloader_test = utils.DataLoader(
-        dataset_test, batch_size=32, shuffle=False, num_workers=cpu_count()-1)
+        dataset_test, batch_size=32, shuffle=False, num_workers=cpu_count()-1, pin_memory=pin_memory)
 
     correct = 0
     total = len(dataloader_test.dataset)
+    model.eval()
 
     with torch.no_grad():
         for batch, Data in enumerate(dataloader_test):
-            Clusters = Data[0].to(device)
-            Features = unsqueeze_features(Data[1])
-            Labels = Data[2]
-            ClusterProperties = torch.cat([Features["ClusterE"]
-            , Features["ClusterPt"], Features["ClusterM02"]
-            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
-            #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-            Label = Labels["PartPID"].to(device)
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Features = Data[1].to(device, non_blocking=non_blocking)
+            Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
-
-            pred = model(Clusters, ClusterProperties)
+            pred = model(Clusters, Features)
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
 
     return correct / total
@@ -494,7 +488,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
     scheduler = ASHAScheduler(
         max_t=max_num_epochs,
         grace_period=grace_period,
-        reduction_factor=2)
+        reduction_factor=reduction_factor)
 
     # Init the search algorithm
     searchalgorithm = HyperOptSearch(n_initial_points=num_random_trials)
@@ -525,7 +519,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
         scheduler=scheduler,
         progress_reporter=reporter,
         checkpoint_score_attr="accuracy",
-        keep_checkpoints_num=4)
+        keep_checkpoints_num=2)
 
     # Find best trial and use it on the testset
     best_trial = result.get_best_trial("loss", "min", "last")

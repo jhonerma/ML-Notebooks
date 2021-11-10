@@ -58,9 +58,20 @@ gpus_per_trial = 0
 # num_trials gives the size of the population, i.e. number of different trials
 # num_epochs gives the maximum number of training epochs
 # perturbation_interval controls after how many epochs bad performers change HP
+# set_to_none puts gradients to None instead of 0, can result in speed-up
+# pin_memory and non_blocking can increase performance when loading data from cpu
+# to gpu, set to False when training without gpu
+# use cudnn.benchmark when you rely on convolutions and have constant input shape
+# Instance noise can improve training with images
 num_trials = 4
-num_epochs = 10
-perturbation_interval = 5
+num_epochs = 6
+perturbation_interval = 2
+Use_Shared_Memory = True
+set_to_none = True
+pin_memory = False
+non_blocking = False
+torch.backends.cudnn.benchmark = False
+INSTANCE_NOISE = True
 ################################################################################
 
 
@@ -170,6 +181,7 @@ class ClusterDataset_Full(utils.Dataset):
 
     # If normalize is true return normalized feature otherwise return feature
     def __Normalize(self, feature, min, max):
+        feature = np.atleast_1d(feature)
         if self.Normalize:
             return self.__Norm01(feature, min, max)
         else:
@@ -207,8 +219,9 @@ class ClusterDataset_Full(utils.Dataset):
 
         img = self.__GetCluster(_ClusterN, _ClusterModuleNumber, _ClusterRow, _ClusterCol, _Cluster, _ClusterTiming)
 
-        features = { "ClusterType" : _ClusterType, "ClusterE" : _ClusterE, "ClusterPt" : _ClusterPt
-                    , "ClusterM02" : _ClusterM02, "ClusterM20" : _ClusterM20 , "ClusterDist" : _ClusterDistFromVert}
+        # Stack the features in a single array
+        features = np.concatenate((_ClusterE, _ClusterPt, _ClusterM02, _ClusterM20, _ClusterDistFromVert))
+
         labels = { "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
                   , "PartIsPrimary" : _PartIsPrimary, "PartPID" : _PartPID }
 
@@ -227,22 +240,14 @@ def load_data_test(path=path.abspath('data_test.npz')):
 
 # Helperfunction for obtaining dataloaders
 def get_dataloader(train_ds, val_ds, bs):
-    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1)
-    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1)
+    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
+    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
     return  dl_train, dl_val
-
-# Helper function for getting the right dimension for input features
-# [batch_size, 1] from dimension [batch_size] of data saved in a dict
-def unsqueeze_features(features):
-    for key in features.keys():
-        features[key] = features[key].view(-1,1)
-    return features
 
 ### Add Instance Noise to training image, can improve training
 # https://arxiv.org/abs/1610.04490
-INSTANCE_NOISE = True
-def add_instance_noise(data, device, std=0.01):
-    return data + 0.001 * torch.distributions.Normal(0, std).sample(data.shape).to(device)
+def add_instance_noise(data, std=0.1):
+    return data + 0.001 * torch.distributions.Normal(0, std).sample(data.shape)
 
 ################################################################################
 
@@ -311,31 +316,26 @@ class CNN(nn.Module):
 # function unsqueeze features here. Data[2] contains all labels
 def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
-    size = len(dataloader.dataset)
+    size = len(dataloader)
+    output_frequency = int(0.1 * size)
     running_loss = 0.0
     epoch_steps = 0
+    model.train()
 
     for batch, Data in enumerate(dataloader):
-        Clusters = Data[0].to(device)
-        Features = unsqueeze_features(Data[1])
-        Labels = Data[2]
-
-        # add instance noise to cluster
         if INSTANCE_NOISE:
-            Clusters = add_instance_noise(Clusters, device)
+            Clusters = add_instance_noise(Data[0]).to(device, non_blocking=non_blocking)
+        else:
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
 
-        # Add all additional features into a single tensor
-        ClusterProperties = torch.cat([Features["ClusterE"]
-            , Features["ClusterPt"], Features["ClusterM02"]
-            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
-        #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-        Label = Labels["PartPID"].to(device)
+        Features = Data[1].to(device, non_blocking=non_blocking)
+        Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
         # zero parameter gradients
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=set_to_none)
 
         # prediction and loss
-        pred = model(Clusters, ClusterProperties)
+        pred = model(Clusters, Features)
         loss = loss_fn(pred, Label.long())
 
         # Backpropagation
@@ -345,8 +345,9 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         running_loss += loss.item()
         epoch_steps += 1
 
-        if batch % 10000 == 9999:
-            print(f"[Epoch {epoch+1:d}, Batch {batch+1:5d}]" \
+        if batch % output_frequency == 0 and batch > 0:
+            print(f"[Epoch {epoch+1:d}/{num_epochs:d},"\
+                  f"Batch {batch+1:5d}/{size}]" \
                   f" loss: {running_loss/epoch_steps:.3f}")
             running_loss = 0.0
 
@@ -358,18 +359,15 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     total = 0
     correct = 0
     size = len(dataloader.dataset)
+    model.eval()
 
-    for batch, Data in enumerate(dataloader):
-        with torch.no_grad():
-            Clusters = Data[0].to(device)
-            Features = unsqueeze_features(Data[1])
-            Labels = Data[2]
-            ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
-            #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-            Label = Labels["PartPID"].to(device)
+    with torch.no_grad():
+        for batch, Data in enumerate(dataloader):
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Features = Data[1].to(device, non_blocking=non_blocking)
+            Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
-            pred = model(Clusters, ClusterProperties)
+            pred = model(Clusters, Features)
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
 
             loss = loss_fn(pred, Label.long())#.item()
@@ -399,23 +397,19 @@ def test_accuracy(model, device="cpu"):
     dataset_test = load_data_test()
 
     dataloader_test = utils.DataLoader(
-        dataset_test, batch_size=32, shuffle=False, num_workers=cpu_count()-1)
+        dataset_test, batch_size=32, shuffle=False, num_workers=cpu_count()-1, pin_memory=pin_memory)
 
     correct = 0
     total = len(dataloader_test.dataset)
+    model.eval()
 
     with torch.no_grad():
         for batch, Data in enumerate(dataloader_test):
-            Clusters = Data[0].to(device)
-            Features = unsqueeze_features(Data[1])
-            Labels = Data[2]
-            ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device)
-            #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-            Label = Labels["PartPID"].to(device)
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Features = Data[1].to(device, non_blocking=non_blocking)
+            Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
-
-            pred = model(Clusters, ClusterProperties)
+            pred = model(Clusters, Features)
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
 
     return correct / total

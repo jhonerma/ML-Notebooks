@@ -36,26 +36,35 @@ import ClassModule as cm
 # simultaneously on GPU. Fractional values are possible, i.e. 0.5 will train 2
 # networks on a GPU simultaneously. GPU needs enough memory to hold all models,
 # check memory consumption of model on the GPU in advance
-cpus_per_trial = 2
-gpus_per_trial = 0.33333
-
+cpus_per_trial = 4
+gpus_per_trial = 0
 # From the given searchspace num_trials configurations will be sampled.
 # num_epochs gives the maximum number of training epochs
 # grace_period controls after how many epochs trials will be terminated
+# reduction_factor controls how many models should be stopped after grace_period
 # num_random_trials is the number of random searches to probe the loss function
-num_trials = 50
-num_epochs = 50
-grace_period = 5
-num_random_trials = 20
+# set_to_none puts gradients to None instead of 0, can result in speed-up
+# pin_memory and non_blocking can increase performance when loading data from cpu
+# to gpu, set to False when training without gpu
+# use cudnn.benchmark when you rely on convolutions and have constant input shape
+# Instance noise can improve training with images
+num_trials = 3
+num_epochs = 3
+grace_period = 1
+reduction_factor = 4
+num_random_trials = 1
 Use_Shared_Memory = True
+set_to_none = False
+pin_memory = False
+non_blocking = False
+torch.backends.cudnn.benchmark = False
+INSTANCE_NOISE = True
 ################################################################################
 
 def get_dataloader(train_ds, val_ds, bs):
-    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=True)
-    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=True)
+    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
+    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
     return  dl_train, dl_val
-
-
 
 
 ################################################################################
@@ -135,15 +144,15 @@ class CNN(nn.Module):
 
         self.dense_nn = nn.Sequential(
             nn.Linear(num_features_after_conv + num_in_features, l1),
-            nn.SiLU(),
+            nn.SiLU(True),
             nn.Linear(l1, l2),
-            nn.SiLU(),
+            nn.SiLU(True),
             nn.Linear(l2, l3),
-            nn.SiLU(),
+            nn.SiLU(True),
             nn.Linear(l3, l4),
-            nn.SiLU(),
+            nn.SiLU(True),
             nn.Linear(l4,3),
-            nn.SiLU()
+            nn.SiLU(True)
         )
 
     def __calc_features(self, input_dim):
@@ -186,28 +195,27 @@ class CNN(nn.Module):
 # function unsqueeze features here. Data[2] contains all labels
 def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
-    size = len(dataloader.dataset)
+    size = len(dataloader)
+    output_frequency = int(0.1 * size)
     running_loss = 0.0
     epoch_steps = 0
+    model.train()
 
     # Loop through the dataset
     for batch, Data in enumerate(dataloader):
-        Features = cm.unsqueeze_features(Data[1])
-        Clusters = Data[0].to(device, non_blocking=True)
+        if INSTANCE_NOISE:
+            Clusters = cm.add_instance_noise(Data[0]).to(device, non_blocking=non_blocking)
+        else:
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
 
-        #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-        Label = Data[2]["PartPID"].to(device, non_blocking=True)
-
-        # Add all additional features into a single tensor
-        ClusterProperties = torch.cat([Features["ClusterE"]
-            , Features["ClusterPt"], Features["ClusterM02"]
-            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=True)
+        Features = Data[1].to(device, non_blocking=non_blocking)
+        Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
         # zero parameter gradients
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=set_to_none)
 
         # prediction and loss
-        pred = model(Clusters, ClusterProperties)
+        pred = model(Clusters, Features)
         loss = loss_fn(pred, Label.long())
 
         # Backpropagation
@@ -217,8 +225,9 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         running_loss += loss.item()
         epoch_steps += 1
 
-        if batch % 10000 == 9999:
-            print(f"[Epoch {epoch+1:d}, Batch {batch+1:5d}]" \
+        if batch % output_frequency == 0 and batch > 0:
+            print(f"[Epoch {epoch+1:d}/{num_epochs:d},"\
+                  f"Batch {batch+1:5d}/{size}]" \
                   f" loss: {running_loss/epoch_steps:.3f}")
             running_loss = 0.0
 
@@ -229,19 +238,15 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     total = 0
     correct = 0
     size = len(dataloader.dataset)
+    model.eval()
 
-    for batch, Data in enumerate(dataloader):
-        with torch.no_grad():
-            Features = cm.unsqueeze_features(Data[1])
-            Clusters = Data[0].to(device, non_blocking=True)
-            Label = Data[2]["PartPID"].to(device, non_blocking=True)
+    with torch.no_grad():
+        for batch, Data in enumerate(dataloader):
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Features = Data[1].to(device, non_blocking=non_blocking)
+            Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
-            ClusterProperties = torch.cat([Features["ClusterE"], Features["ClusterPt"], Features["ClusterM02"]
-                                      , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=True)
-            #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-
-
-            pred = model(Clusters, ClusterProperties)
+            pred = model(Clusters, Features)
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
 
             loss = loss_fn(pred, Label.long())#.item()
@@ -251,7 +256,7 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     # Save a checkpoint. It is automatically registered with Ray Tune and will
     # potentially be passed as the `checkpoint_dir`parameter in future
     # iterations.
-    if epoch % grace_period-1 == 0:
+    if epoch % grace_period == 0:
         with tune.checkpoint_dir(epoch) as checkpoint_dir:
             _path = path.join(checkpoint_dir, "checkpoint")
             torch.save((model.state_dict(), optimizer.state_dict()), _path)
@@ -272,23 +277,19 @@ def test_accuracy(model, device="cpu"):
 
     #get dataloader
     dataloader_test = utils.DataLoader(
-        dataset_test, batch_size=64, shuffle=False, num_workers=cpu_count()-1, pin_memory=True)
+        dataset_test, batch_size=64, shuffle=False, num_workers=cpu_count()-1, pin_memory=pin_memory)
 
     correct = 0
     total = len(dataloader_test.dataset)
+    model.eval()
 
     with torch.no_grad():
         for batch, Data in enumerate(dataloader_test):
-            Features = cm.unsqueeze_features(Data[1])
-            Clusters = Data[0].to(device, non_blocking=True)
-            Label = Data[2]["PartPID"].to(device, non_blocking=True)
+            Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Features = Data[1].to(device, non_blocking=non_blocking)
+            Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
-            ClusterProperties = torch.cat([Features["ClusterE"]
-            , Features["ClusterPt"], Features["ClusterM02"]
-            , Features["ClusterM20"], Features["ClusterDist"]], dim=1).to(device, non_blocking=True)
-            #Labels = torch.cat([Labels["PartPID"], dim=1]).to(device)
-
-            pred = model(Clusters, ClusterProperties)
+            pred = model(Clusters, Features)
             correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
 
     return correct / total
@@ -372,7 +373,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
     scheduler = ASHAScheduler(
         max_t=max_num_epochs,
         grace_period=grace_period,
-        reduction_factor=2)
+        reduction_factor=reduction_factor)
 
     # Init the search algorithm
     searchalgorithm = HyperOptSearch(n_initial_points=num_random_trials)
