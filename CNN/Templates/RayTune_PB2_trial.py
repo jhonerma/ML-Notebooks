@@ -44,7 +44,7 @@ import random
 
 ################################################################################
 ########################### Run Configuratinos #################################
-# Set the number CPUS that should be used per trial and dataloader
+# Set the number CPUS that should be used per trial
 # If set to 1 number of cucurrent training networks is equal to number of CPU
 # cores. There should enough memory available to load the dataset into Memory
 # for each concurrent trial
@@ -52,8 +52,10 @@ import random
 # simultaneously on GPU. Fractional values are possible, i.e. 0.5 will train 2
 # networks on a GPU simultaneously. GPU needs enough memory to hold all models,
 # check memory consumption of model on the GPU in advance
+# num_workers controls how many subprocesses for loading a dataloader will spawn
 cpus_per_trial = 3
 gpus_per_trial = 0
+num_workers = 2
 
 # num_trials gives the size of the population, i.e. number of different trials
 # num_epochs gives the maximum number of training epochs
@@ -240,8 +242,8 @@ def load_data_test(path=path.abspath('data_test.npz')):
 
 # Helperfunction for obtaining dataloaders
 def get_dataloader(train_ds, val_ds, bs):
-    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
-    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=cpus_per_trial-1, pin_memory=pin_memory)
+    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=num_workers, pin_memory=pin_memory)
+    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=num_workers, pin_memory=pin_memory)
     return  dl_train, dl_val
 
 ### Add Instance Noise to training image, can improve training
