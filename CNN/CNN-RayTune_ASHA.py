@@ -199,6 +199,7 @@ class CNN(nn.Module):
 def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
     size = len(dataloader)
+    max_batch_number = size - (size % accumulation_steps)
     output_frequency = int(0.1 * size)
     running_loss = 0.0
     epoch_steps = 0
@@ -207,13 +208,14 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
     # Loop through the dataset
     for batch, Data in enumerate(dataloader):
+        if batch == max_batch_number:
+            break
+        Features = Data[1].to(device, non_blocking=non_blocking)
+        Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
         if INSTANCE_NOISE:
             Clusters = cm.add_instance_noise(Data[0]).to(device, non_blocking=non_blocking)
         else:
             Clusters = Data[0].to(device, non_blocking=non_blocking)
-
-        Features = Data[1].to(device, non_blocking=non_blocking)
-        Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
         # prediction and loss
         # If GPU memory is to small one can run over several batches to mimic a

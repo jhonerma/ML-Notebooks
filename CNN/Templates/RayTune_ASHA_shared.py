@@ -64,6 +64,7 @@ num_workers = 4
 # grace_period controls after how many epochs trials will be terminated
 # reduction_factor controls how many models should be stopped after grace_period
 # num_random_trials is the number of random searches to probe the loss function
+# combine several batches into one backprop to circumvent GPU memory limitations
 # set_to_none puts gradients to None instead of 0, can result in speed-up
 # pin_memory and non_blocking can increase performance when loading data from cpu
 # to gpu, set to False when training without gpu
@@ -74,6 +75,7 @@ num_epochs = 3
 grace_period = 1
 reduction_factor = 4
 num_random_trials = 6
+accumulation_steps = 2
 set_to_none = False
 pin_memory = False
 non_blocking = False
@@ -302,31 +304,38 @@ class CNN(nn.Module):
 def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
     size = len(dataloader)
+    max_batch_number = size - (size % accumulation_steps)
     output_frequency = int(0.1 * size)
     running_loss = 0.0
     epoch_steps = 0
     model.train()
+    model.zero_grad(set_to_none=set_to_none)
 
     # Loop through the dataset
     for batch, Data in enumerate(dataloader):
+        if batch == max_batch_number:
+            break
+        Features = Data[1].to(device, non_blocking=non_blocking)
+        Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
         if INSTANCE_NOISE:
             Clusters = add_instance_noise(Data[0]).to(device, non_blocking=non_blocking)
         else:
             Clusters = Data[0].to(device, non_blocking=non_blocking)
 
-        Features = Data[1].to(device, non_blocking=non_blocking)
-        Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
-
-        # zero parameter gradients
-        optimizer.zero_grad(set_to_none=set_to_none)
-
         # prediction and loss
+        # If GPU memory is to small one can run over several batches to mimic a
+        # larger batch size, per-batch loss has to combined, usually averaging
+        # is sufficient
         pred = model(Clusters, Features)
         loss = loss_fn(pred, Label.long())
-
+        loss = loss / accumulation_steps
         # Backpropagation
         loss.backward()
-        optimizer.step()
+
+        if (batch+1) % accumulation_steps == 0:
+            optimizer.step()
+            # zero parameter gradients
+            optimizer.zero_grad(set_to_none=set_to_none)
 
         running_loss += loss.item()
         epoch_steps += 1
