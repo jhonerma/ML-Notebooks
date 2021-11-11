@@ -142,7 +142,8 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         Features = Data[1].to(device, non_blocking=non_blocking)
         Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
         if INSTANCE_NOISE:
-            Clusters = add_instance_noise(Data[0]).to(device, non_blocking=non_blocking)
+            Clusters = add_instance_noise(Data[0])
+            Clusters = Clusters.to(device, non_blocking=non_blocking)
         else:
             Clusters = Data[0].to(device, non_blocking=non_blocking)
 
