@@ -37,8 +37,8 @@ import ClassModule as cm
 # networks on a GPU simultaneously. GPU needs enough memory to hold all models,
 # check memory consumption of model on the GPU in advance
 # num_workers controls how many subprocesses for loading a dataloader will spawn
-cpus_per_trial = 4
-gpus_per_trial = 0
+cpus_per_trial = 2
+gpus_per_trial = 0.333
 num_workers = 4
 
 # From the given searchspace num_trials configurations will be sampled.
@@ -46,21 +46,23 @@ num_workers = 4
 # grace_period controls after how many epochs trials will be terminated
 # reduction_factor controls how many models should be stopped after grace_period
 # num_random_trials is the number of random searches to probe the loss function
+# combine several batches into one backprop to circumvent GPU memory limitations
 # set_to_none puts gradients to None instead of 0, can result in speed-up
 # pin_memory and non_blocking can increase performance when loading data from cpu
 # to gpu, set to False when training without gpu
 # use cudnn.benchmark when you rely on convolutions and have constant input shape
 # Instance noise can improve training with images
-num_trials = 3
-num_epochs = 3
-grace_period = 1
+num_trials = 48
+num_epochs = 50
+grace_period = 5
 reduction_factor = 4
-num_random_trials = 1
+num_random_trials = 16
+accumulation_steps = 2
 Use_Shared_Memory = True
-set_to_none = False
-pin_memory = False
-non_blocking = False
-torch.backends.cudnn.benchmark = False
+set_to_none = True
+pin_memory = True
+non_blocking = True
+torch.backends.cudnn.benchmark = True
 INSTANCE_NOISE = True
 ################################################################################
 
@@ -109,7 +111,7 @@ class ResidualBlock(nn.Module):
 
 
 class CNN(nn.Module):
-    def __init__(self, l1, l2, l3, l4, input_dim=(2,20,20), num_in_features=5):
+    def __init__(self, l1, l2, l3, input_dim=(2,20,20), num_in_features=5):
         super(CNN, self).__init__()
 
         self.block1 = nn.Sequential(
@@ -152,9 +154,7 @@ class CNN(nn.Module):
             nn.SiLU(True),
             nn.Linear(l2, l3),
             nn.SiLU(True),
-            nn.Linear(l3, l4),
-            nn.SiLU(True),
-            nn.Linear(l4,3),
+            nn.Linear(l3, 3),
             nn.SiLU(True)
         )
 
@@ -165,7 +165,7 @@ class CNN(nn.Module):
         #print(f"After block2 {x.shape}")
         x = self.block3(x)
         #print(f"After block3 {x.shape}")
-        #x = self.block4(x)
+        x = self.block4(x)
         #print(f"After block4 {x.shape}")
         #x = self.block5(x)
         #print(f"After block5 {x.shape}")
@@ -178,7 +178,7 @@ class CNN(nn.Module):
         x = self.block1(cluster)
         x = self.block2(x)
         x = self.block3(x)
-        #x = self.block4(x)
+        x = self.block4(x)
         #x = self.block5(x)
         x = self.avgpool(x)
         x = self.flatten(x)
@@ -203,6 +203,7 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     running_loss = 0.0
     epoch_steps = 0
     model.train()
+    model.zero_grad(set_to_none=set_to_none)
 
     # Loop through the dataset
     for batch, Data in enumerate(dataloader):
@@ -214,16 +215,20 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         Features = Data[1].to(device, non_blocking=non_blocking)
         Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
-        # zero parameter gradients
-        optimizer.zero_grad(set_to_none=set_to_none)
-
         # prediction and loss
+        # If GPU memory is to small one can run over several batches to mimic a
+        # larger batch size, per-batch loss has to combined, usually averaging
+        # is sufficient
         pred = model(Clusters, Features)
         loss = loss_fn(pred, Label.long())
-
+        loss = loss / accumulation_steps
         # Backpropagation
         loss.backward()
-        optimizer.step()
+
+        if (batch+1) % accumulation_steps == 0:
+            optimizer.step()
+            # zero parameter gradients
+            optimizer.zero_grad(set_to_none=set_to_none)
 
         running_loss += loss.item()
         epoch_steps += 1
@@ -306,7 +311,7 @@ def test_accuracy(model, device="cpu"):
 def train_model(config, data=None, checkpoint_dir=None):
 
     # load model
-    model = CNN(config["l1"],config["l2"],config["l3"], config["l4"])
+    model = CNN(config["l1"],config["l2"],config["l3"])
 
     # check for avlaible resource and initialize device
     device = "cpu"
@@ -363,13 +368,12 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
 
     # Setup hyperparameter-space to search
     config = {
-        "l1": tune.qlograndint(500, 1000, 2), #(500, 1000, 2),
-        "l2": tune.qlograndint(250, 500, 2), #(250, 500, 2),
-        "l3": tune.qlograndint(50, 250, 2), #(50, 250, 2),
-        "l4": tune.qlograndint(9, 50, 2), #(9, 50, 2),
-        "lr": tune.loguniform(1e-4, 1e-1),
-        "wd": tune.loguniform(1e-5, 1e-3),
-        "batch_size": tune.choice([32,64,128,256])
+        "l1": tune.qlograndint(400, 600, 2), #(500, 1000, 2),
+        "l2": tune.qlograndint(125, 250, 2), #(250, 500, 2),
+        "l3": tune.qlograndint(9, 65, 2), #(50, 250, 2),
+        "lr": tune.loguniform(1e-4, 1e0),
+        "wd": tune.loguniform(1e-5, 1e-2),
+        "batch_size": tune.choice([32, 64, 128, 256])
     }
 
     # Init the scheduler
@@ -386,7 +390,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
 
     # Init the Reporter, used for printing the relevant informations
     reporter = CLIReporter(
-        parameter_columns=["l1", "l2", "l3", "l4", "lr","wd", "batch_size"],
+        parameter_columns=["l1", "l2", "l3", "lr","wd", "batch_size"],
         metric_columns=["loss", "accuracy", "training_iteration"])
 
     #Get Current date and time for checkpoint folder
@@ -422,7 +426,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
     print(f"Best trial final validation loss: {best_trial.last_result['loss']}")
     print(f"Best trial final validation accuracy: {best_trial.last_result['accuracy']}")
     # Adjust the input for your model here
-    best_trained_model = CNN(best_trial.config["l1"], best_trial.config["l2"], best_trial.config["l3"], best_trial.config["l4"])
+    best_trained_model = CNN(best_trial.config["l1"], best_trial.config["l2"], best_trial.config["l3"])
     device = "cpu"
     if torch.cuda.is_available():
         device = "cuda:0"
