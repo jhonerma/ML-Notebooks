@@ -440,7 +440,7 @@ def train_model(config, checkpoint_dir=None):
         if torch.cuda.device_count() > 1:
             model = nn.DataParallel(model)
 
-    print(f"Training started on device {device}")
+    print(f"Training started on device {device} with virtual batch_size {accumulation_steps * int(config['batch_size'])} (real batch_size {int(config['batch_size'])})")
 
     # send model to device
     model.to(device)
