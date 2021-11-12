@@ -142,7 +142,8 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         Features = Data[1].to(device, non_blocking=non_blocking)
         Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
         if INSTANCE_NOISE:
-            Clusters = add_instance_noise(Data[0]).to(device, non_blocking=non_blocking)
+            Clusters = add_instance_noise(Data[0])
+            Clusters = Clusters.to(device, non_blocking=non_blocking)
         else:
             Clusters = Data[0].to(device, non_blocking=non_blocking)
 
@@ -253,7 +254,7 @@ def train_model(config, data=None, checkpoint_dir=None):
         if torch.cuda.device_count() > 1:
             model = nn.DataParallel(model)
 
-    print(f"Training started on device {device}")
+    print(f"Training started on device {device} with virtual batch_size {accumulation_steps * int(config['batch_size'])} (real batch_size {int(config['batch_size'])})")
 
     # send model to device
     model.to(device)
