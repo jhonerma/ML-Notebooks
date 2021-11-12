@@ -261,7 +261,6 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     val_steps = 0
     total = 0
     correct = 0
-    size = len(dataloader.dataset)
     model.eval()
 
     with torch.no_grad():
@@ -274,7 +273,8 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
                 pred = model(Clusters, Features)
                 loss = loss_fn(pred, Label.long())#.item()
 
-            correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
+            correct += (pred.argmax(1) == Label).sum().item()
+            total += Label.size(0)
             val_loss += loss.cpu().numpy()
             val_steps += 1
 
@@ -286,7 +286,7 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
             _path = path.join(checkpoint_dir, "checkpoint")
             torch.save((model.state_dict(), optimizer.state_dict()), _path)
 
-    tune.report(loss=(val_loss / val_steps), accuracy= correct / size)
+    tune.report(loss=(val_loss / val_steps), accuracy= correct / total)
 
 ################################################################################
 
@@ -305,7 +305,7 @@ def test_accuracy(model, device="cpu"):
         dataset_test, batch_size=64, shuffle=False, num_workers=cpu_count()-1, pin_memory=pin_memory)
 
     correct = 0
-    total = len(dataloader_test.dataset)
+    total = 0
     model.eval()
 
     with torch.no_grad():
@@ -316,7 +316,9 @@ def test_accuracy(model, device="cpu"):
 
             with torch.cuda.amp.autocast(enabled=use_amp):
                 pred = model(Clusters, Features)
-            correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
+
+            total += Label.size(0)
+            correct += (pred.argmax(1) == Label).sum().item()
 
     return correct / total
 
@@ -397,7 +399,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
         "l3": tune.qlograndint(9, 65, 2), #(50, 250, 2),
         "lr": tune.loguniform(1e-4, 1e0),
         "wd": tune.loguniform(1e-5, 1e-2),
-        "batch_size": tune.choice([32, 64, 128, 256]) # 
+        "batch_size": tune.choice([32, 64, 128, 256]) #
     }
 
     # Init the scheduler
