@@ -59,17 +59,21 @@ cpus_per_trial = 2
 gpus_per_trial = 0
 num_workers = 4
 
-# From the given searchspace num_trials configurations will be sampled.
-# num_epochs gives the maximum number of training epochs
-# grace_period controls after how many epochs trials will be terminated
-# reduction_factor controls how many models should be stopped after grace_period
-# num_random_trials is the number of random searches to probe the loss function
-# combine several batches into one backprop to circumvent GPU memory limitations
-# set_to_none puts gradients to None instead of 0, can result in speed-up
-# pin_memory and non_blocking can increase performance when loading data from cpu
-# to gpu, set to False when training without gpu
-# use cudnn.benchmark when you rely on convolutions and have constant input shape
-# Instance noise can improve training with images
+# -From the given searchspace num_trials configurations will be sampled.
+# -num_epochs gives the maximum number of training epochs
+# -grace_period controls after how many epochs trials will be terminated
+# -reduction_factor controls how many models should be stopped after grace_period
+# -num_random_trials is the number of random searches to probe the loss function
+# -combine several batches into one backprop to circumvent GPU memory limitations
+# -set_to_none puts gradients to None instead of 0, can result in speed-up
+# -pin_memory and non_blocking can increase performance when loading data from cpu
+#  to gpu, set to False when training without gpu
+# -use_amp sets automatic mixed precision mode, reduces memory usage and can
+#  improve training speed (especially on RTX cards). But can also lead to some weird
+#  behaviour in pytorch, monitor output for nan/inf loss
+# -use cudnn.benchmark when you rely on convolutions and have constant input shape
+#  increases gpu memory usage on first forward pass
+# -Instance noise can improve training with images
 num_trials = 6
 num_epochs = 3
 grace_period = 1
@@ -79,13 +83,26 @@ accumulation_steps = 2
 set_to_none = False
 pin_memory = False
 non_blocking = False
-torch.backends.cudnn.benchmark = False
+use_amp = True
+use_benchmark = True
 INSTANCE_NOISE = True
 ################################################################################
 
 
 ################################################################################
 ############### Dataset and various helper functions ###########################
+
+cuda_av = torch.cuda.is_available()
+cuda_devcount = torch.cuda.device_count()
+cudnn_av = torch.backends.cudnn.is_available()
+
+# Failsave if there is no gpu and cuda-setting are still turned on
+if not cuda_av:
+        pin_memory = False
+        non_blocking = False
+        use_amp = False
+        use_benchmark = False
+        print("No CUDA-device found, all CUDA-related features turned off")
 
 # Function for loading data for normalization from file
 def load_Normalization_Data(path=path.abspath('normalization.npz')):
@@ -283,11 +300,19 @@ class CNN(nn.Module):
             nn.SiLU()
         )
 
+    # autocast is needed here when running with multiple gpus
     def forward(self, cluster, clusNumXYEPt):
-        cluster = self.feature_ext(cluster)
-        x = self.flatten(cluster)
-        x = torch.cat([x, clusNumXYEPt], dim=1)
-        logits = self.dense_nn(x)
+        if cuda_av:
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                cluster = self.feature_ext(cluster)
+                x = self.flatten(cluster)
+                x = torch.cat([x, clusNumXYEPt], dim=1)
+                logits = self.dense_nn(x)
+        else:
+            cluster = self.feature_ext(cluster)
+            x = self.flatten(cluster)
+            x = torch.cat([x, clusNumXYEPt], dim=1)
+            logits = self.dense_nn(x)
         return logits
 
 ################################################################################
@@ -298,9 +323,8 @@ class CNN(nn.Module):
 ###################### Training and Validation loop ############################
 ### Implement train and validation loop
 # Data[0] contains an image of of the cell energies and timings.
-# Data[1] contains all features in a dict. Their shapes have to be changed from
-# [batch_size] to [batch_size,1] for input into linear layers, implemented via
-# function unsqueeze features here. Data[2] contains all labels
+# Data[1] contains all features in a dict
+# Data[2] contains all labels
 def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
     size = len(dataloader)
@@ -310,6 +334,8 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     epoch_steps = 0
     model.train()
     model.zero_grad(set_to_none=set_to_none)
+    if cuda_av:
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     # Loop through the dataset
     for batch, Data in enumerate(dataloader):
@@ -327,17 +353,33 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         # If GPU memory is to small one can run over several batches to mimic a
         # larger batch size, per-batch loss has to combined, usually averaging
         # is sufficient
-        pred = model(Clusters, Features)
-        loss = loss_fn(pred, Label.long())
-        loss = loss / accumulation_steps
-        # Backpropagation
-        loss.backward()
+        # Example for how amp is implemented with batch accumulation
+        if cuda_av:
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                pred = model(Clusters, Features)
+                loss = loss_fn(pred, Label.long())
+                loss = loss / accumulation_steps
 
-        if (batch+1) % accumulation_steps == 0:
-            optimizer.step()
-            # zero parameter gradients
-            optimizer.zero_grad(set_to_none=set_to_none)
+            scaler.scale(loss).backward()
+                #Backpropagation
+            if (batch+1) % accumulation_steps == 0:
+                scaler.step(optimizer)
+                scaler.update()
+                # zero parameter gradients
+                optimizer.zero_grad(set_to_none=set_to_none)
+        else:
+            pred = model(Clusters, Features)
+            loss = loss_fn(pred, Label.long())
+            loss = loss / accumulation_steps
+            # Backpropagation
+            loss.backward()
 
+            if (batch+1) % accumulation_steps == 0:
+                optimizer.step()
+                # zero parameter gradients
+                optimizer.zero_grad(set_to_none=set_to_none)
+
+        # Print out running loss every 10% of batches
         running_loss += loss.item()
         epoch_steps += 1
 
@@ -347,13 +389,17 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
                   f" loss: {running_loss/epoch_steps:.3f}")
             running_loss = 0.0
 
-def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
+        # Free up gpu memory used by cudnn for benchmarking
+        if use_benchmark and batch == 0:
+            torch.cuda.empty_cache()
 
+
+def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
+    # Note that for inference no GradScaler() is necessary during inference
     val_loss = 0.0
     val_steps = 0
     total = 0
     correct = 0
-    size = len(dataloader.dataset)
     model.eval()
 
     with torch.no_grad():
@@ -362,10 +408,16 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
             Features = Data[1].to(device, non_blocking=non_blocking)
             Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
-            pred = model(Clusters, Features)
-            correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
+            if cuda_av:
+                with torch.cuda.amp.autocast(enabled=use_amp):
+                    pred = model(Clusters, Features)
+                    loss = loss_fn(pred, Label.long())#.item()
+            else:
+                pred = model(Clusters, Features)
+                loss = loss_fn(pred, Label.long())#.item()
 
-            loss = loss_fn(pred, Label.long())#.item()
+            correct += (pred.argmax(1) == Label).sum().item()
+            total += Label.size(0)
             val_loss += loss.cpu().numpy()
             val_steps += 1
 
@@ -377,7 +429,8 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
             _path = path.join(checkpoint_dir, "checkpoint")
             torch.save((model.state_dict(), optimizer.state_dict()), _path)
 
-    tune.report(loss=(val_loss / val_steps), accuracy= correct / size)
+    # Report metrics back to ray
+    tune.report(loss = (val_loss / val_steps), accuracy = correct / total)
 
 ################################################################################
 
@@ -394,10 +447,10 @@ def test_accuracy(model, device="cpu"):
 
     #get dataloader
     dataloader_test = utils.DataLoader(
-        dataset_test, batch_size=32, shuffle=False, num_workers=cpu_count()-1, pin_memory=pin_memory)
+        dataset_test, batch_size=64, shuffle=False, num_workers=cpu_count()-1, pin_memory=pin_memory)
 
     correct = 0
-    total = len(dataloader_test.dataset)
+    total = 0
     model.eval()
 
     with torch.no_grad():
@@ -406,8 +459,14 @@ def test_accuracy(model, device="cpu"):
             Features = Data[1].to(device, non_blocking=non_blocking)
             Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
 
-            pred = model(Clusters, Features)
-            correct += (pred.argmax(1) == Label).type(torch.float).sum().item()
+            if cuda_av:
+                with torch.cuda.amp.autocast(enabled=use_amp):
+                    pred = model(Clusters, Features)
+            else:
+                pred = model(Clusters, Features)
+
+            total += Label.size(0)
+            correct += (pred.argmax(1) == Label).sum().item()
 
     return correct / total
 
@@ -418,6 +477,14 @@ def test_accuracy(model, device="cpu"):
 ############################# Training Routine #################################
 ### Implement training routine
 def train_model(config, data=None, checkpoint_dir=None):
+
+    # Importing torch again here is necessary to run the cudnn benchmarks for
+    # every trial, since ray can't distribute these
+    import torch
+    if cudnn_av and use_benchmark:
+        torch.backends.cudnn.enabled = use_benchmark
+        torch.backends.cudnn.benchmark = use_benchmark
+        print("Cudnn backend and benchmarking enabled")
 
     # load model
     model = CNN(config["l1"],config["l2"],config["l3"])
@@ -550,5 +617,6 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
 ################################################################################
 ######################### Starting the training ################################
 if __name__ == "__main__":
+
     main(num_samples=num_trials, max_num_epochs=num_epochs
         , gpus_per_trial=gpus_per_trial)
