@@ -1,7 +1,12 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-### Load Libraries
+# Load Libraries
+from os import cpu_count, path
+from time import strftime
+from functools import reduce as func_reduce
+from operator import mul as op_mul
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -9,23 +14,18 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data as utils
 
-from functools import reduce as func_reduce
-from operator import mul as op_mul
 from ray import tune
 from ray.tune import CLIReporter
 from ray.tune.suggest import ConcurrencyLimiter
 from ray.tune.schedulers import ASHAScheduler
 from ray.tune.suggest.hyperopt import HyperOptSearch
-from os import cpu_count, path
-from time import strftime
 
-#This class contains DatasetClass and several helper functions
+# This class contains DatasetClass and several helper functions
 import ClassModule as cm
 
 
-
-################################################################################
-########################### Run Configuratinos #################################
+###############################################################################
+########################### Run Configuratinos ################################
 # Set the number CPUS that should be used per trial. The number
 # of concurrent trials is the minimum of 6 or the number of avlaible cores
 # divided by cpus_per_trial. For the search algorithm to function properly this
@@ -44,17 +44,17 @@ num_workers = 4
 # -From the given searchspace num_trials configurations will be sampled.
 # -num_epochs gives the maximum number of training epochs
 # -grace_period controls after how many epochs trials will be terminated
-# -reduction_factor controls how many models should be stopped after grace_period
-# -num_random_trials is the number of random searches to probe the loss function
-# -combine several batches into one backprop to circumvent GPU memory limitations
+# -reduction_factor controls fraction of stopped trials stopped after grace_period
+# -num_random_trials is the number of random probes of the loss function
+# -combine several batches into one backprop to circumvent GPU memory limit
 # -set_to_none puts gradients to None instead of 0, can result in speed-up
-# -pin_memory and non_blocking can increase performance when loading data from cpu
-#  to gpu, set to False when training without gpu
+# -pin_memory and non_blocking can increase performance when loading data from
+#  cpu to gpu, set to False when training without gpu
 # -use_amp sets automatic mixed precision mode, reduces memory usage and can
-#  improve training speed (especially on RTX cards). But can also lead to some weird
-#  behaviour in pytorch, monitor output for nan/inf loss
-# -use cudnn.benchmark when you rely on convolutions and have constant input shape
-#  increases gpu memory usage on first forward pass
+#  improve training speed (especially on RTX cards). But can also lead to some
+#  weird behaviour in pytorch, monitor output for nan/inf loss
+# -use cudnn.benchmark when you rely on convolutions and have constant input
+#  shape, increases gpu memory usage on first forward pass
 # -Instance noise can improve training with images
 num_trials = 48
 num_epochs = 50
@@ -69,52 +69,60 @@ non_blocking = False
 use_amp = False
 use_benchmark = False
 INSTANCE_NOISE = True
-################################################################################
+###############################################################################
+
 
 def get_dataloader(train_ds, val_ds, bs):
-    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=num_workers, pin_memory=pin_memory)
-    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=num_workers, pin_memory=pin_memory)
-    return  dl_train, dl_val
+    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True,
+                                num_workers=num_workers, pin_memory=pin_memory)
+    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True,
+                              num_workers=num_workers, pin_memory=pin_memory)
+    return dl_train, dl_val
+
 
 cudnn_av = torch.backends.cudnn.is_available()
 
 # Failsave if there is no gpu and cuda-setting are still turned on
 if not torch.cuda.is_available():
-        pin_memory = False
-        non_blocking = False
-        use_amp = False
-        use_benchmark = False
-        print("No CUDA-device found, all CUDA-related features turned off")
+    pin_memory = False
+    non_blocking = False
+    use_amp = False
+    use_benchmark = False
+    print("No CUDA-device found, all CUDA-related features turned off")
 
-################################################################################
-############################## Network #########################################
-### Define the network
-# The number of neurons per layer here has been made variable, so ray can search
-# for the optimal number. The number of channels in the feature extraction
-# layer could also be made variable e.g.
+###############################################################################
+############################## Network ########################################
+# Define the network
+# The number of neurons per layer here has been made variable, so ray can
+# search for the optimal number. The number of channels in the feature
+# extraction layer could also be made variable e.g.
 
 
 class ResidualBlock(nn.Module):
-    def __init__(self,in_channels,out_channels,stride=1,kernel_size=3,padding=1,bias=False):
-        super(ResidualBlock,self).__init__()
-        self.cnn1 =nn.Sequential(
-            nn.Conv2d(in_channels,out_channels,kernel_size,stride,padding,bias=False),
+    def __init__(self, in_channels, out_channels, stride=1, kernel_size=3,
+                 padding=1, bias=False):
+        super(ResidualBlock, self).__init__()
+        self.cnn1 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding,
+                      bias=False),
             nn.BatchNorm2d(out_channels),
             nn.SiLU(True)
         )
         self.cnn2 = nn.Sequential(
-            nn.Conv2d(out_channels,out_channels,kernel_size,1,padding,bias=False),
+            nn.Conv2d(out_channels, out_channels, kernel_size, 1, padding,
+                      bias=False),
             nn.BatchNorm2d(out_channels)
         )
         if stride != 1 or in_channels != out_channels:
             self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels,out_channels,kernel_size=1,stride=stride,bias=False),
+                nn.Conv2d(in_channels, out_channels, kernel_size=1,
+                          stride=stride, bias=False),
                 nn.BatchNorm2d(out_channels)
             )
         else:
             self.shortcut = nn.Sequential()
 
-    def forward(self,x):
+    def forward(self, x):
         residual = x
         x = self.cnn1(x)
         x = self.cnn2(x)
@@ -123,9 +131,8 @@ class ResidualBlock(nn.Module):
         return x
 
 
-
 class CNN(nn.Module):
-    def __init__(self, l1, l2, l3, input_dim=(2,20,20), num_in_features=5):
+    def __init__(self, l1, l2, l3, input_dim=(2, 20, 20), num_in_features=5):
         super(CNN, self).__init__()
 
         self.block1 = nn.Sequential(
@@ -135,23 +142,23 @@ class CNN(nn.Module):
         )
 
         self.block2 = nn.Sequential(
-            nn.MaxPool2d(1,1),
-            ResidualBlock(64,64),
-            ResidualBlock(64,64,2)
+            nn.MaxPool2d(1, 1),
+            ResidualBlock(64, 64),
+            ResidualBlock(64, 64, 2)
         )
 
         self.block3 = nn.Sequential(
-            ResidualBlock(64,128),
-            ResidualBlock(128,128)
+            ResidualBlock(64, 128),
+            ResidualBlock(128, 128)
         )
 
         self.block4 = nn.Sequential(
-            ResidualBlock(128,256),
-            ResidualBlock(256,256,2)
+            ResidualBlock(128, 256),
+            ResidualBlock(256, 256, 2)
         )
         self.block5 = nn.Sequential(
-            ResidualBlock(256,512),
-            ResidualBlock(512,512)
+            ResidualBlock(256, 512),
+            ResidualBlock(512, 512)
         )
 
         self.avgpool = nn.AvgPool2d(2)
@@ -174,18 +181,19 @@ class CNN(nn.Module):
 
     def __calc_features(self, input_dim):
         x = self.block1(torch.rand(1, *input_dim))
-        #print(f"After block1 {x.shape}")
+        # print(f"After block1 {x.shape}")
         x = self.block2(x)
-        #print(f"After block2 {x.shape}")
+        # print(f"After block2 {x.shape}")
         x = self.block3(x)
-        #print(f"After block3 {x.shape}")
+        # print(f"After block3 {x.shape}")
         x = self.block4(x)
-        #print(f"After block4 {x.shape}")
-        #x = self.block5(x)
-        #print(f"After block5 {x.shape}")
+        # print(f"After block4 {x.shape}")
+        # x = self.block5(x)
+        # print(f"After block5 {x.shape}")
         x = self.avgpool(x)
+        # print(f"After pool {x.shape}")
         feat = func_reduce(op_mul, list(x.shape))
-        #print(f" Features {feat}")
+        # print(f" Features {feat}")
         return feat
 
     def forward(self, cluster, clusNumXYEPt):
@@ -212,12 +220,12 @@ class CNN(nn.Module):
             logits = self.dense_nn(x)
         return logits
 
-################################################################################
+###############################################################################
 
 
-################################################################################
-###################### Training and Validation loop ############################
-### Implement train and validation loop
+###############################################################################
+###################### Training and Validation loop ###########################
+# Implement train and validation loop
 # Data[0] contains an image of of the cell energies and timings.
 # Data[1] contains all features in a dict.
 # Data[2] contains all labels
@@ -257,7 +265,7 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
                 loss = loss / accumulation_steps
 
             scaler.scale(loss).backward()
-                #Backpropagation
+            # Backpropagation
             if (batch+1) % accumulation_steps == 0:
                 scaler.step(optimizer)
                 scaler.update()
@@ -274,13 +282,14 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         epoch_steps += 1
 
         if batch % output_frequency == 0 and batch > 0:
-            print(f"[Epoch {epoch+1:d}/{num_epochs:d},"\
-                  f"Batch {batch+1:5d}/{size}]" \
+            print(f"[Epoch {epoch+1:d}/{num_epochs:d},"
+                  f"Batch {batch+1:5d}/{size}]"
                   f" loss: {running_loss/epoch_steps:.3f}")
             running_loss = 0.0
 
         if use_benchmark and batch == 0:
             torch.cuda.empty_cache()
+
 
 def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
 
@@ -299,10 +308,10 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
             if torch.cuda.is_available():
                 with torch.cuda.amp.autocast(enabled=use_amp):
                     pred = model(Clusters, Features)
-                    loss = loss_fn(pred, Label.long())#.item()
+                    loss = loss_fn(pred, Label.long())
             else:
                 pred = model(Clusters, Features)
-                loss = loss_fn(pred, Label.long())#.item()
+                loss = loss_fn(pred, Label.long())
 
             correct += (pred.argmax(1) == Label).sum().item()
             total += Label.size(0)
@@ -317,23 +326,24 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
             _path = path.join(checkpoint_dir, "checkpoint")
             torch.save((model.state_dict(), optimizer.state_dict()), _path)
 
-    tune.report(loss=(val_loss / val_steps), accuracy= correct / total)
+    tune.report(loss=(val_loss / val_steps), accuracy=(correct / total))
 
-################################################################################
+###############################################################################
 
 
-################################################################################
-############################## Test Loop #######################################
-### Implement method for accuracy testing on test set
+###############################################################################
+############################## Test Loop ######################################
+# Implement method for accuracy testing on test set
 def test_accuracy(model, device="cpu"):
 
-    #load the test dataset
+    # load the test dataset
     dataset_test = cm.load_data_test()
 
-
-    #get dataloader
-    dataloader_test = utils.DataLoader(
-        dataset_test, batch_size=64, shuffle=False, num_workers=cpu_count()-1, pin_memory=pin_memory)
+    # get dataloader
+    dataloader_test = utils.DataLoader(dataset_test, batch_size=64,
+                                       shuffle=False,
+                                       num_workers=cpu_count()-1,
+                                       pin_memory=pin_memory)
 
     correct = 0
     total = 0
@@ -356,12 +366,12 @@ def test_accuracy(model, device="cpu"):
 
     return correct / total
 
-################################################################################
+###############################################################################
 
 
-################################################################################
-############################# Training Routine #################################
-### Implement training routine
+###############################################################################
+############################# Training Routine ################################
+# Implement training routine
 def train_model(config, data=None, checkpoint_dir=None):
 
     import torch
@@ -371,7 +381,7 @@ def train_model(config, data=None, checkpoint_dir=None):
         print("Cudnn backend and benchmarking enabled")
 
     # load model
-    model = CNN(config["l1"],config["l2"],config["l3"])
+    model = CNN(config["l1"], config["l2"], config["l3"])
 
     # check for avlaible resource and initialize device
     device = "cpu"
@@ -380,14 +390,17 @@ def train_model(config, data=None, checkpoint_dir=None):
         if torch.cuda.device_count() > 1:
             model = nn.DataParallel(model)
 
-    print(f"Training started on device {device} with virtual batch_size {accumulation_steps * int(config['batch_size'])} (real batch_size {int(config['batch_size'])})")
+    print(f"Training started on device {device} with virtual batch_size"
+          f"{accumulation_steps * int(config['batch_size'])}"
+          f"(real batch_size {int(config['batch_size'])})")
 
     # send model to device
     model.to(device)
 
     # initialise loss function and optimizer
     loss_fn = F.cross_entropy
-    optimizer = torch.optim.Adam(model.parameters(),lr=config["lr"], weight_decay=config["wd"])
+    optimizer = optim.Adam(model.parameters(),
+                           lr=config["lr"], weight_decay=config["wd"])
 
     # The `checkpoint_dir` parameter gets passed by Ray Tune when a checkpoint
     # should be restored.
@@ -409,31 +422,34 @@ def train_model(config, data=None, checkpoint_dir=None):
         dataset_train, [test_abs, len(dataset_train) - test_abs])
 
     # get dataloaders
-    dataloader_train, dataloader_val = get_dataloader(data_train, data_val, int(config["batch_size"]))
+    dataloader_train, dataloader_val = get_dataloader(
+        data_train, data_val, int(config["batch_size"]))
 
-    #Start training loop
+    # Start training loop
     for epoch in range(100):
-        train_loop(epoch, dataloader_train, model, loss_fn, optimizer, device=device)
-        val_loop(epoch, dataloader_val, model, loss_fn, optimizer, device=device)
+        train_loop(epoch, dataloader_train, model, loss_fn,
+                   optimizer, device=device)
+        val_loop(epoch, dataloader_val, model, loss_fn,
+                 optimizer, device=device)
 
     print("Finished Training")
 
-################################################################################
+###############################################################################
 
 
-################################################################################
-############################ Main Function #####################################
-### Setup all Ray Tune functionality and start training
+###############################################################################
+############################ Main Function ####################################
+# Setup all Ray Tune functionality and start training
 def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
 
     # Setup hyperparameter-space to search
     config = {
-        "l1": tune.qlograndint(500, 750, 2), #(500, 1000, 2),
-        "l2": tune.qlograndint(125, 250, 2), #(250, 500, 2),
-        "l3": tune.qlograndint(9, 65, 2), #(50, 250, 2),
+        "l1": tune.qlograndint(500, 750, 2),
+        "l2": tune.qlograndint(125, 250, 2),
+        "l3": tune.qlograndint(9, 65, 2),
         "lr": tune.loguniform(1e-4, 1e0),
         "wd": tune.loguniform(1e-5, 1e-2),
-        "batch_size": tune.choice([32, 64, 128, 256]) #
+        "batch_size": tune.choice([32, 64, 128, 256])
     }
 
     # Init the scheduler
@@ -445,20 +461,21 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
     # Init the search algorithm
     searchalgorithm = HyperOptSearch(n_initial_points=num_random_trials)
     # Have to limit max number of concurrent trials for searchalgorithm
+    Concurrent = int(min(6., np.floor(cpu_count()/cpus_per_trial)))
     searchalgorithm = ConcurrencyLimiter(searchalgorithm,
-                max_concurrent=int(min(6., np.floor(cpu_count()/cpus_per_trial))))
+                                         max_concurrent=Concurrent)
 
     # Init the Reporter, used for printing the relevant informations
     reporter = CLIReporter(
-        parameter_columns=["l1", "l2", "l3", "lr","wd", "batch_size"],
+        parameter_columns=["l1", "l2", "l3", "lr", "wd", "batch_size"],
         metric_columns=["loss", "accuracy", "training_iteration"])
 
-    #Get Current date and time for checkpoint folder
+    # Get Current date and time for checkpoint folder
     timestr = strftime("%Y_%m_%d-%H:%M:%S")
     name = "ASHA-" + timestr
 
-    # Load the dataset, with tune.with_parameters the data will be loaded to the
-    # shared memory and every trials will have access to it
+    # Load the dataset, with tune.with_parameters the data will be loaded to
+    # the shared memory and every trials will have access to it
     if Use_Shared_Memory:
         dataset = cm.load_data()
     else:
@@ -469,12 +486,12 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
         tune.with_parameters(train_model, data=dataset),
         metric="loss",
         mode="min",
-        name = name,
+        name=name,
         resources_per_trial={"cpu": cpus_per_trial, "gpu": gpus_per_trial},
         config=config,
         num_samples=num_samples,
-        local_dir = "./Ray_Results",
-        search_alg = searchalgorithm,
+        local_dir="./Ray_Results",
+        search_alg=searchalgorithm,
         scheduler=scheduler,
         progress_reporter=reporter,
         checkpoint_score_attr="accuracy",
@@ -483,10 +500,14 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
     # Find best trial and use it on the testset
     best_trial = result.get_best_trial("loss", "min", "last")
     print(f"Best trial config: {best_trial.config}")
-    print(f"Best trial final validation loss: {best_trial.last_result['loss']}")
-    print(f"Best trial final validation accuracy: {best_trial.last_result['accuracy']}")
+    print(f"Best trial final validation loss: "
+          f"{best_trial.last_result['loss']}")
+    print(f"Best trial final validation accuracy: "
+          f"{best_trial.last_result['accuracy']}")
     # Adjust the input for your model here
-    best_trained_model = CNN(best_trial.config["l1"], best_trial.config["l2"], best_trial.config["l3"])
+    best_trained_model = CNN(best_trial.config["l1"],
+                             best_trial.config["l2"],
+                             best_trial.config["l3"])
     device = "cpu"
     if torch.cuda.is_available():
         device = "cuda:0"
@@ -502,11 +523,11 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
     test_acc = test_accuracy(best_trained_model, device)
     print(f"Best trial test set accuracy: {test_acc}")
 
-################################################################################
+###############################################################################
 
 
-################################################################################
-######################### Starting the training ################################
+###############################################################################
+######################### Starting the training ###############################
 if __name__ == "__main__":
-    main(num_samples=num_trials, max_num_epochs=num_epochs
-        , gpus_per_trial=gpus_per_trial)
+    main(num_samples=num_trials, max_num_epochs=num_epochs,
+         gpus_per_trial=gpus_per_trial)

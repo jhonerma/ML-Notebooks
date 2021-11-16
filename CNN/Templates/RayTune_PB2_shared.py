@@ -18,41 +18,41 @@ from os import cpu_count, path
 from time import strftime
 import random
 
-################################################################################
-############################### Usage ##########################################
+###############################################################################
+############################### Usage #########################################
 # When using this template these are the necessary modifications to be made in
 # this script:
-# 1. Figure out your available resources. How many CPU cores do I have? how much
-#    Memory does my Data need. From this configure the variables cpus_per_trial
-#    And gpus_per_trial
-# 2. Change the dataset to your own data and update the training, validation and
-#    test routine accordingly.
+# 1. Figure out your available resources. How many CPU cores do I have? how
+#    much Memory does my Data need. From this configure the variables
+#    cpus_per_trial and gpus_per_trial
+# 2. Change the dataset to your own data and update the training, validation
+#    and test routine accordingly.
 # 3. Change the model to your architecture and adjust the parameter searchspace
-#    in the main function. The endpart of the main routine, where the best model
-#    is used on the test, has to be adjusted for the new model, as does the
-#    reporter.
-# 4. Change the goal of training, if desired. At the moment the training goal is
-#    to minimize loss, but one could also choose e.g. to maximaze accuracy
+#    in the main function. The endpart of the main routine, where the best
+#    model is used on the test, has to be adjusted for the new model, as does
+#    the reporter.
+# 4. Change the goal of training, if desired. At the moment the training goal
+#    is to minimize loss, but one could also choose e.g. to maximaze accuracy
 # 5. Choose number of epochs training should last and the number of trials by
 #    adjusting
 # One can ,of course, also change the optimizer to ones favourite in the main
 # routine. The loss function can also be changed there. There are also other
 # search algorithms available in Ray, check the documentation for all of them
-################################################################################
-################################################################################
+###############################################################################
+###############################################################################
 
 
-################################################################################
-########################### Run Configuratinos #################################
+###############################################################################
+########################### Run Configuratinos ################################
 # Set the number CPUS that should be used per trial.
 # If set to 1 number of cucurrent training networks is equal to number of CPU
 # cores. There should enough memory available to load the dataset into Memory
 # for each concurrent trial
-# In case of training with GPU this will be limited to number of models training
+# In case of training with GPU this will be limited to number training
 # simultaneously on GPU. Fractional values are possible, i.e. 0.5 will train 2
 # networks on a GPU simultaneously. GPU needs enough memory to hold all models,
 # check memory consumption of model on the GPU in advance
-# num_workers controls how many subprocesses for loading a dataloader will spawn
+# num_workers controls how many subprocesses for loading dataloader will spawn
 cpus_per_trial = 3
 gpus_per_trial = 0
 num_workers = 2
@@ -60,15 +60,15 @@ num_workers = 2
 # num_trials gives the size of the population, i.e. number of different trials
 # num_epochs gives the maximum number of training epochs
 # perturbation_interval controls after how many epochs bad performers change HP
-# combine several batches into one backprop to circumvent GPU memory limitations
+# combine several batches into one backprop to circumvent GPU memory limit
 # -set_to_none puts gradients to None instead of 0, can result in speed-up
-# -pin_memory and non_blocking can increase performance when loading data from cpu
-#  to gpu, set to False when training without gpu
+# -pin_memory and non_blocking can increase performance when loading data from
+#  cpu to gpu, set to False when training without gpu
 # -use_amp sets automatic mixed precision mode, reduces memory usage and can
-#  improve training speed (especially on RTX cards). But can also lead to some weird
-#  behaviour in pytorch, monitor output for nan/inf loss
-# -use cudnn.benchmark when you rely on convolutions and have constant input shape
-#  increases gpu memory usage on first forward pass
+#  improve training speed (especially on RTX cards). But can also lead to some
+#  weird behaviour in pytorch, monitor output for nan/inf loss
+# -use cudnn.benchmark when you rely on convolutions and have constant input
+#  shape increases gpu memory usage on first forward pass
 # -Instance noise can improve training with images
 num_trials = 4
 num_epochs = 6
@@ -80,11 +80,11 @@ non_blocking = False
 use_amp = True
 use_benchmark = True
 INSTANCE_NOISE = True
-################################################################################
+###############################################################################
 
 
-################################################################################
-############### Dataset and various helper functions ###########################
+###############################################################################
+############### Dataset and various helper functions ##########################
 
 cuda_av = torch.cuda.is_available()
 cuda_devcount = torch.cuda.device_count()
@@ -92,27 +92,40 @@ cudnn_av = torch.backends.cudnn.is_available()
 
 # Failsave if there is no gpu and cuda-setting are still turned on
 if not cuda_av:
-        pin_memory = False
-        non_blocking = False
-        use_amp = False
-        use_benchmark = False
-        print("No CUDA-device found, all CUDA-related features turned off")
+    pin_memory = False
+    non_blocking = False
+    use_amp = False
+    use_benchmark = False
+    print("No CUDA-device found, all CUDA-related features turned off")
 
 # Function for loading data for normalization from file
+
+
 def load_Normalization_Data(path=path.abspath('normalization.npz')):
     data = np.load(path, allow_pickle=True)
 
-    maxData = { 'maxCellEnergy' : data['maxCellEnergy'], 'maxCellTiming' : data['maxCellTiming']
-               ,'maxClusterE' : data['maxClusterE'], 'maxClusterPt' : data['maxClusterPt']
-               ,'maxClusterM20' : data['maxClusterM20'], 'maxClusterM02' : data['maxClusterM02']
-               ,'maxClusterDistFromVert' : data['maxClusterDistFromVert'], 'maxPartE' : data['maxPartE']
-               ,'maxPartPt' : data['maxPartPt'], 'maxPartEta' : data['maxPartEta'], 'maxPartPhi' : data['maxPartPhi'] }
+    maxData = {'maxCellEnergy': data['maxCellEnergy'],
+               'maxCellTiming': data['maxCellTiming'],
+               'maxClusterE': data['maxClusterE'],
+               'maxClusterPt': data['maxClusterPt'],
+               'maxClusterM20': data['maxClusterM20'],
+               'maxClusterM02': data['maxClusterM02'],
+               'maxClusterDistFromVert': data['maxClusterDistFromVert'],
+               'maxPartE': data['maxPartE'], 'maxPartPt': data['maxPartPt'],
+               'maxPartEta': data['maxPartEta'],
+               'maxPartPhi': data['maxPartPhi']}
 
-    minData = { 'minCellEnergy' : data['minCellEnergy'], 'minCellTiming' : data['minCellTiming']
-               ,'minClusterE' : data['minClusterE'], 'minClusterPt' : data['minClusterPt']
-               ,'minClusterM20' : data['minClusterM20'], 'minClusterM02' : data['minClusterM02']
-               ,'minClusterDistFromVert' : data['minClusterDistFromVert'], 'minPartE' : data['minPartE']
-               ,'minPartPt' : data['minPartPt'], 'minPartEta' : data['minPartEta'], 'minPartPhi' : data['minPartPhi'] }
+    minData = {'minCellEnergy': data['minCellEnergy'],
+               'minCellTiming': data['minCellTiming'],
+               'minClusterE': data['minClusterE'],
+               'minClusterPt': data['minClusterPt'],
+               'minClusterM20': data['minClusterM20'],
+               'minClusterM02': data['minClusterM02'],
+               'minClusterDistFromVert': data['minClusterDistFromVert'],
+               'minPartE': data['minPartE'],
+               'minPartPt': data['minPartPt'],
+               'minPartEta': data['minPartEta'],
+               'minPartPhi': data['minPartPhi']}
 
     return minData, maxData
 
@@ -120,9 +133,12 @@ def load_Normalization_Data(path=path.abspath('normalization.npz')):
 # items from shared memory. Can be used for datapreprocessing and augmentation.
 # Check the pytorch documentation for detailed instructions on setting up a
 # dataset class
+
+
 class ClusterDataset(utils.Dataset):
     """Cluster dataset."""
     # Initialize the class
+
     def __init__(self, data=None, Normalize=True, arrsize=20):
 
         self.data = data
@@ -139,7 +155,7 @@ class ClusterDataset(utils.Dataset):
     def __ReconstructCluster(self, ncell, modnum, row, col, cdata):
         _row = row.copy()
         _col = col.copy()
-        if not np.all( modnum[0] == modnum[:ncell]):
+        if not np.all(modnum[0] == modnum[:ncell]):
             ModNumDif = modnum - np.min(modnum[:ncell])
             mask = np.where(ModNumDif == 1)
             _col[mask] += 48
@@ -149,7 +165,7 @@ class ClusterDataset(utils.Dataset):
             _row[mask] += 24
             _col[mask] += 48
 
-        arr = np.zeros(( self.arrsize, self.arrsize ), dtype=np.float32)
+        arr = np.zeros((self.arrsize, self.arrsize), dtype=np.float32)
 
         col_min = np.min(_col[:ncell])
         row_min = np.min(_row[:ncell])
@@ -159,7 +175,8 @@ class ClusterDataset(utils.Dataset):
         offset_w = int((self.arrsize-width)/2)
 
         for i in range(ncell):
-            arr[ _row[i] - row_min + offset_h, _col[i] - col_min + offset_w ] = cdata[i]
+            arr[_row[i] - row_min + offset_h, _col[i]
+                - col_min + offset_w] = cdata[i]
         return arr
 
     # Function for merging the timing and energy information into one 'picture'
@@ -196,17 +213,30 @@ class ClusterDataset(utils.Dataset):
             idx = idx.tolist()
 
         _ClusterN = self.data['ClusterN'][idx]
-        _Cluster = self.__Normalize(self.data['Cluster'][idx], 0, self.maxData['maxCellEnergy'])
-        _ClusterTiming = self.__Normalize(self.data['ClusterTiming'][idx], 0, self.maxData['maxCellTiming'])
+        _Cluster = self.__Normalize(
+                self.data['Cluster'][idx], 0, self.maxData['maxCellEnergy'])
+        _ClusterTiming = self.__Normalize(self.data['ClusterTiming'][idx], 0,
+                                          self.maxData['maxCellTiming'])
         _ClusterType = self.data['ClusterType'][idx]
-        _ClusterE = self.__Normalize(self.data['ClusterE'][idx], self.minData['minClusterE'], self.maxData['maxClusterE'])
-        _ClusterPt = self.__Normalize(self.data['ClusterPt'][idx], self.minData['minClusterPt'], self.maxData['maxClusterPt'])
+        _ClusterE = self.__Normalize(self.data['ClusterE'][idx],
+                                     self.minData['minClusterE'],
+                                     self.maxData['maxClusterE'])
+        _ClusterPt = self.__Normalize(self.data['ClusterPt'][idx],
+                                      self.minData['minClusterPt'],
+                                      self.maxData['maxClusterPt'])
         _ClusterModuleNumber = self.data['ClusterModuleNumber'][idx]
         _ClusterCol = self.data['ClusterCol'][idx]
         _ClusterRow = self.data['ClusterRow'][idx]
-        _ClusterM02 = self.__Normalize(self.data['ClusterM02'][idx], self.minData['minClusterM02'], self.maxData['maxClusterM02'])
-        _ClusterM20 = self.__Normalize(self.data['ClusterM20'][idx], self.minData['minClusterM20'], self.maxData['maxClusterM20'])
-        _ClusterDistFromVert = self.__Normalize(self.data['ClusterDistFromVert'][idx], self.minData['minClusterDistFromVert'], self.maxData['maxClusterDistFromVert'])
+        _ClusterM02 = self.__Normalize(self.data['ClusterM02'][idx],
+                                       self.minData['minClusterM02'],
+                                       self.maxData['maxClusterM02'])
+        _ClusterM20 = self.__Normalize(self.data['ClusterM20'][idx],
+                                       self.minData['minClusterM20'],
+                                       self.maxData['maxClusterM20'])
+        _ClusterDistFromVert = self.__Normalize(
+            self.data['ClusterDistFromVert'][idx],
+            self.minData['minClusterDistFromVert'],
+            self.maxData['maxClusterDistFromVert'])
         _PartE = self.data['PartE'][idx]
         _PartPt = self.data['PartPt'][idx]
         _PartEta = self.data['PartEta'][idx]
@@ -216,64 +246,85 @@ class ClusterDataset(utils.Dataset):
 
         _PartPID = self.__ChangePID(_PartPID)
 
-        img = self.__GetCluster(_ClusterN, _ClusterModuleNumber, _ClusterRow, _ClusterCol, _Cluster, _ClusterTiming)
+        img = self.__GetCluster(_ClusterN, _ClusterModuleNumber,
+                                _ClusterRow, _ClusterCol, _Cluster,
+                                _ClusterTiming)
 
         # Stack the features in a single array
-        features = np.concatenate((_ClusterE, _ClusterPt, _ClusterM02, _ClusterM20, _ClusterDistFromVert))
+        features = np.concatenate((_ClusterE, _ClusterPt, _ClusterM02,
+                                   _ClusterM20, _ClusterDistFromVert))
 
-        labels = { "ClusterType" : _ClusterType, "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
-                  , "PartIsPrimary" : _PartIsPrimary, "PartPID" : _PartPID }
+        labels = {"ClusterType": _ClusterType, "PartE": _PartE,
+                  "PartPt": _PartPt, "PartEta": _PartEta,
+                  "PartPhi": _PartPhi, "PartIsPrimary": _PartIsPrimary,
+                  "PartPID": _PartPID}
 
         return (img, features, labels)
 
 # Helperfunction for loading the dataset. It is good to use functions for this,
 # because pythons garbage collection will trigger at the end of a function call
 # and clean up everything that is possible, i.e. free up memory and close files
+
+
 def load_data(path=path.abspath('data_train.npz')):
     data = np.load(path, allow_pickle=True)
-    data_dict = { 'Size' : data['Size'], 'ClusterN' : data['ClusterN'], 'Cluster' : data['Cluster']
-    , 'ClusterTiming' : data['ClusterTiming'], 'ClusterType' : data['ClusterType']
-    , 'ClusterE' : data['ClusterE'], 'ClusterPt' : data['ClusterPt']
-    , 'ClusterModuleNumber' : data['ClusterModuleNumber'], 'ClusterCol' : data['ClusterCol'], 'ClusterCol' : data['ClusterCol']
-    , 'ClusterRow' : data['ClusterRow'], 'ClusterM02' : data['ClusterM02']
-    , 'ClusterM20' : data['ClusterM20'], 'ClusterDistFromVert' : data['ClusterDistFromVert']
-    , 'PartE' : data['PartE'], 'PartPt' : data['PartPt']
-    , 'PartEta' : data['PartEta'], 'PartPhi' : data['PartPhi']
-    , 'PartIsPrimary' : data['PartIsPrimary'], 'PartPID' : data['PartPID']}
+    data_dict = {'Size': data['Size'], 'ClusterN': data['ClusterN'],
+                 'Cluster': data['Cluster'],
+                 'ClusterTiming': data['ClusterTiming'],
+                 'ClusterType': data['ClusterType'],
+                 'ClusterE': data['ClusterE'],
+                 'ClusterPt': data['ClusterPt'],
+                 'ClusterModuleNumber': data['ClusterModuleNumber'],
+                 'ClusterCol': data['ClusterCol'],
+                 'ClusterRow': data['ClusterRow'],
+                 'ClusterM02': data['ClusterM02'],
+                 'ClusterM20': data['ClusterM20'],
+                 'ClusterDistFromVert': data['ClusterDistFromVert'],
+                 'PartE': data['PartE'], 'PartPt': data['PartPt'],
+                 'PartEta': data['PartEta'], 'PartPhi': data['PartPhi'],
+                 'PartIsPrimary': data['PartIsPrimary'],
+                 'PartPID': data['PartPID']}
     return data_dict
 
 # Helperfunction for obtaining dataloaders
+
+
 def get_dataloader(train_ds, val_ds, bs):
-    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=num_workers, pin_memory=pin_memory)
-    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True, num_workers=num_workers, pin_memory=pin_memory)
-    return  dl_train, dl_val
+    dl_train = utils.DataLoader(train_ds, batch_size=bs, shuffle=True,
+                                num_workers=num_workers, pin_memory=pin_memory)
+    dl_val = utils.DataLoader(val_ds, batch_size=bs * 2, shuffle=True,
+                              num_workers=num_workers, pin_memory=pin_memory)
+    return dl_train, dl_val
 
 # ## Instance Noise
 # https://arxiv.org/abs/1610.04490
+
+
 def add_instance_noise(data, std=0.1):
     return data + 0.001 * torch.distributions.Normal(0, std).sample(data.shape)
 
-################################################################################
+###############################################################################
 
 
-################################################################################
-############################## Network #########################################
+###############################################################################
+############################## Network ########################################
 ### Define the network
 # Get a network-candidate from the ASHA-scheduler first and use this notebook
 # for hyperparameter tuning
 
 class CNN(nn.Module):
-    def __init__(self, l1=100, l2=50, l3=25, input_dim=(2,20,20), num_in_features=5):
+    def __init__(self, l1=100, l2=50, l3=25, input_dim=(2, 20, 20),
+                 num_in_features=5):
         super(CNN, self).__init__()
         self.feature_ext = nn.Sequential(
-            nn.Conv2d(2,10, kernel_size=1),
+            nn.Conv2d(2, 10, kernel_size=1),
             nn.SiLU(),
-            nn.Conv2d(10,10, kernel_size=5, padding=0),
+            nn.Conv2d(10, 10, kernel_size=5, padding=0),
             nn.SiLU(),
             nn.MaxPool2d(2),
-            nn.Conv2d(10,10, kernel_size=3, padding=0),
+            nn.Conv2d(10, 10, kernel_size=3, padding=0),
             nn.SiLU(),
-            nn.Conv2d(10,6, kernel_size=1),
+            nn.Conv2d(10, 6, kernel_size=1),
             nn.SiLU(),
             nn.MaxPool2d(2)
         )
@@ -281,7 +332,8 @@ class CNN(nn.Module):
         self.flatten = nn.Flatten()
 
         # Gives the number of features after the conv layer
-        num_features_after_conv = func_reduce(op_mul, list(self.feature_ext(torch.rand(1, *input_dim)).shape))
+        num_features_after_conv = func_reduce(op_mul, list(
+                self.feature_ext(torch.rand(1, *input_dim)).shape))
 
         self.dense_nn = nn.Sequential(
             nn.Linear(num_features_after_conv + num_in_features, 16),
@@ -290,16 +342,9 @@ class CNN(nn.Module):
             nn.SiLU(),
             nn.Linear(128, 4),
             nn.SiLU(),
-            nn.Linear(4,3),
+            nn.Linear(4, 3),
             nn.SiLU()
         )
-
-    def forward(self, cluster, clusNumXYEPt):
-        cluster = self.feature_ext(cluster)
-        x = self.flatten(cluster)
-        x = torch.cat([x, clusNumXYEPt], dim=1)
-        logits = self.dense_nn(x)
-        return logits
 
     def forward(self, cluster, clusNumXYEPt):
         if cuda_av:
@@ -315,11 +360,11 @@ class CNN(nn.Module):
             logits = self.dense_nn(x)
         return logits
 
-################################################################################
+###############################################################################
 
 
-################################################################################
-###################### Training and Validation loop ############################
+###############################################################################
+###################### Training and Validation loop ###########################
 ### Implement train and validation loop
 # Data[0] contains an image of of the cell energies and timings.
 # Data[1] contains all features in a dict. Their shapes have to be changed from
@@ -360,7 +405,7 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
                 loss = loss / accumulation_steps
 
             scaler.scale(loss).backward()
-                #Backpropagation
+            # Backpropagation
             if (batch+1) % accumulation_steps == 0:
                 scaler.step(optimizer)
                 scaler.update()
@@ -383,8 +428,8 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         epoch_steps += 1
 
         if batch % output_frequency == 0 and batch > 0:
-            print(f"[Epoch {epoch+1:d}/{num_epochs:d},"\
-                  f"Batch {batch+1:5d}/{size}]" \
+            print(f"[Epoch {epoch+1:d}/{num_epochs:d},"
+                  f"Batch {batch+1:5d}/{size}]"
                   f" loss: {running_loss/epoch_steps:.3f}")
             running_loss = 0.0
 
@@ -410,10 +455,10 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
             if cuda_av:
                 with torch.cuda.amp.autocast(enabled=use_amp):
                     pred = model(Clusters, Features)
-                    loss = loss_fn(pred, Label.long())#.item()
+                    loss = loss_fn(pred, Label.long())  # .item()
             else:
                 pred = model(Clusters, Features)
-                loss = loss_fn(pred, Label.long())#.item()
+                loss = loss_fn(pred, Label.long())  # .item()
 
             correct += (pred.argmax(1) == Label).sum().item()
             total += Label.size(0)
@@ -423,31 +468,32 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     # Save a checkpoint. It is automatically registered with Ray Tune and will
     # potentially be passed as the `checkpoint_dir`parameter in future
     # iterations. Also report the metrics back to ray with tune.report
-    mean_accuracy= correct / total
+    mean_accuracy = correct / total
     with tune.checkpoint_dir(step=epoch) as checkpoint_dir:
         _path = path.join(checkpoint_dir, "checkpoint")
-        torch.save({"epoch" : epoch,
-         "model_state_dict" : model.state_dict(),
-         "optimizer_state_dict" : optimizer.state_dict(),
-         "mean_accuracy" : mean_accuracy}, _path)
+        torch.save({"epoch": epoch,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "mean_accuracy": mean_accuracy}, _path)
 
     # Report metrics back to ray
-    tune.report(loss=(val_loss / val_steps), mean_accuracy= mean_accuracy)
-################################################################################
+    tune.report(loss=(val_loss / val_steps), mean_accuracy=mean_accuracy)
+###############################################################################
 
 
-################################################################################
-############################## Test Loop #######################################
+###############################################################################
+############################## Test Loop ######################################
 ### Implement method for accuracy testing on test set
 def test_accuracy(model, device="cpu"):
 
-    #load the test dataset
+    # load the test dataset
     data = load_data(path=path.abspath('data_test.npz'))
     dataset_test = ClusterDataset(data=data)
 
-    #get dataloader
-    dataloader_test = utils.DataLoader(
-        dataset_test, batch_size=64, shuffle=False, num_workers=cpu_count()-1, pin_memory=pin_memory)
+    # get dataloader
+    dataloader_test = utils.DataLoader(dataset_test, batch_size=64,
+                                       shuffle=False, num_workers=cpu_count()-1,
+                                       pin_memory=pin_memory)
 
     correct = 0
     total = 0
@@ -469,11 +515,11 @@ def test_accuracy(model, device="cpu"):
             correct += (pred.argmax(1) == Label).sum().item()
 
     return correct / total
-################################################################################
+###############################################################################
 
 
-################################################################################
-############################# Training Routine #################################
+###############################################################################
+############################# Training Routine ################################
 ### Implement training routine
 def train_model(config, data=None, checkpoint_dir=None):
     epoch = 0
@@ -496,14 +542,17 @@ def train_model(config, data=None, checkpoint_dir=None):
         if torch.cuda.device_count() > 1:
             model = nn.DataParallel(model)
 
-    print(f"Training started on device {device} with virtual batch_size {accumulation_steps * int(config['batch_size'])} (real batch_size {int(config['batch_size'])})")
+    print(f"Training started on device {device} with virtual batch_size "
+          f"{accumulation_steps * int(config['batch_size'])} "
+          f"(real batch_size {int(config['batch_size'])})")
 
     # send model to device
     model.to(device)
 
     # initialise loss function and opptimizer
     loss_fn = F.cross_entropy
-    optimizer = torch.optim.Adam(model.parameters(),lr=config["lr"], weight_decay=config["wd"])
+    optimizer = optim.Adam(model.parameters(), lr=config["lr"],
+                           weight_decay=config["wd"])
 
     # check whether checkpoint is available
     if checkpoint_dir:
@@ -512,7 +561,6 @@ def train_model(config, data=None, checkpoint_dir=None):
         model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         epoch = checkpoint["epoch"]
-
 
     # load dataset
     dataset_train = ClusterDataset(data=data)
@@ -523,53 +571,55 @@ def train_model(config, data=None, checkpoint_dir=None):
         dataset_train, [test_abs, len(dataset_train) - test_abs])
 
     # get dataloaders
-    dataloader_train, dataloader_val = get_dataloader(subset_train, subset_val, int(config["batch_size"]))
+    dataloader_train, dataloader_val = get_dataloader(
+            subset_train, subset_val, int(config["batch_size"]))
 
     while True:
-        train_loop(epoch, dataloader_train, model, loss_fn, optimizer, device=device)
-        val_loop(epoch, dataloader_train, model, loss_fn, optimizer, device=device)
+        train_loop(epoch, dataloader_train, model,
+                   loss_fn, optimizer, device=device)
+        val_loop(epoch, dataloader_train, model,
+                 loss_fn, optimizer, device=device)
         epoch += 1
 
 
-################################################################################
+###############################################################################
 
 
-################################################################################
-############################ Main Function #####################################
+###############################################################################
+############################ Main Function ####################################
 ### Setup all Ray Tune functionality and start training
 def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
 
-
-    # Setup hyperparameter-space for initial parameters. Has to be done this way,
-    # current limitation of the pb2 implementation
+    # Setup hyperparameter-space for initial parameters. Has to be done this
+    # way, current limitation of the pb2 implementation
     config = {
         "lr": tune.sample_from(lambda spec: random.uniform(1e-4, 1e0)),
-        "wd" : tune.sample_from(lambda spec: random.uniform(0, 1e-1)),
-        "batch_size": tune.sample_from(lambda spec: random.randint(32,1024))
+        "wd": tune.sample_from(lambda spec: random.uniform(0, 1e-1)),
+        "batch_size": tune.sample_from(lambda spec: random.randint(32, 1024))
     }
 
     # Init the scheduler
     pb2_scheduler = PB2(time_attr="training_iteration",
-    metric="mean_accuracy",
-    mode="max",
-    perturbation_interval=perturbation_interval,
-    hyperparam_bounds={
-        "lr": [1e-4, 1e1],
-        "wd" : [0, 1e-1],
-        "batch_size": [32, 1024]
-        })
+                        metric="mean_accuracy",
+                        mode="max",
+                        perturbation_interval=perturbation_interval,
+                        hyperparam_bounds={
+                            "lr": [1e-4, 1e1],
+                            "wd": [0, 1e-1],
+                            "batch_size": [32, 1024]
+                            })
 
     # Init the Reporter, used for printing the relevant informations
     reporter = CLIReporter(
         parameter_columns=["lr", "wd", "batch_size"],
         metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
-    #Get Current date and time for checkpoint folder
+    # Get Current date and time for checkpoint folder
     timestr = strftime("%Y_%m_%d-%H:%M:%S")
     name = "PBT-" + timestr
 
-    #Stops training when desired accuracy or maximum training epochs is reached
-    #Implementation of a custom stopper
+    # Stops training when desired accuracy or maximum training epochs is
+    # reached. Implementation of a custom stopper
     class CustomStopper(tune.Stopper):
         def __init__(self):
             self.should_stop = False
@@ -577,25 +627,26 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
         def __call__(self, trial_id, result):
             if not self.should_stop and result["mean_accuracy"] > 0.95:
                 self.should_stop = True
-            return self.should_stop or result["training_iteration"] >= max_num_epochs
+            Time_Up = result["training_iteration"] >= max_num_epochs
+            return self.should_stop or Time_Up
 
         def stop_all(self):
             return self.should_stop
 
     stopper = CustomStopper()
 
-    # Load the dataset, with tune.with_parameters the data will be loaded to the
-    # shared memory and every trials will have access to it
+    # Load the dataset, with tune.with_parameters the data will be loaded to
+    # the shared memory and every trials will have access to it
     dataset = load_data()
 
     # Init the run method
     result = tune.run(
         tune.with_parameters(train_model, data=dataset),
-        name = name,
+        name=name,
         resources_per_trial={"cpu": cpus_per_trial, "gpu": gpus_per_trial},
         config=config,
         num_samples=num_samples,
-        local_dir = "./Ray_Results",
+        local_dir="./Ray_Results",
         scheduler=pb2_scheduler,
         stop=stopper,
         progress_reporter=reporter,
@@ -605,8 +656,10 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
     # Find best trial and use it on the testset
     best_trial = result.get_best_trial("mean_accuracy", "max", "last")
     print(f"Best trial config: {best_trial.config}")
-    print(f"Best trial final validation loss: {best_trial.last_result['loss']}")
-    print(f"Best trial final validation accuracy: {best_trial.last_result['mean_accuracy']}")
+    print(f"Best trial final validation loss: "
+          f"{best_trial.last_result['loss']}")
+    print(f"Best trial final validation accuracy: "
+          "{best_trial.last_result['mean_accuracy']}")
 
     best_trained_model = CNN()
     device = "cpu"
@@ -624,11 +677,11 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=1):
     test_acc = test_accuracy(best_trained_model, device)
     print(f"Best trial test set accuracy: {test_acc}")
 
-################################################################################
+###############################################################################
 
 
-################################################################################
-######################### Starting the training ################################
+###############################################################################
+######################### Starting the training ###############################
 if __name__ == "__main__":
-	main(num_samples=num_trials, max_num_epochs=num_epochs
-        , gpus_per_trial=gpus_per_trial)
+    main(num_samples=num_trials, max_num_epochs=num_epochs,
+         gpus_per_trial=gpus_per_trial)
