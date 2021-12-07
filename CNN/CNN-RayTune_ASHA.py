@@ -38,7 +38,7 @@ import ClassModule as cm
 # check memory consumption of model on the GPU in advance
 # num_workers controls how many subprocesses for loading a dataloader will spawn
 cpus_per_trial = 2
-gpus_per_trial = 0
+gpus_per_trial = 0.33
 num_workers = 4
 
 # -From the given searchspace num_trials configurations will be sampled.
@@ -68,7 +68,7 @@ pin_memory = True
 non_blocking = True
 use_amp = False
 use_benchmark = True
-INSTANCE_NOISE = True
+INSTANCE_NOISE = False
 ###############################################################################
 
 
@@ -259,7 +259,7 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         if torch.cuda.is_available():
             with torch.cuda.amp.autocast(enabled=use_amp):
                 pred = model(Clusters, Features)
-                loss = loss_fn(pred, Label.long())
+                loss = loss_fn(pred, Label[:,6].long())
                 loss = loss / accumulation_steps
 
             scaler.scale(loss).backward()
@@ -306,7 +306,7 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
             if torch.cuda.is_available():
                 with torch.cuda.amp.autocast(enabled=use_amp):
                     pred = model(Clusters, Features)
-                    loss = loss_fn(pred, Label.long())
+                    loss = loss_fn(pred, Label[:,6].long())
             else:
                 pred = model(Clusters, Features)
                 loss = loss_fn(pred, Label[:,6].long())#.item()
