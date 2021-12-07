@@ -45,10 +45,11 @@ class ClusterDataset(utils.Dataset):
     """Cluster dataset."""
     # Initialize the class
 
-    def __init__(self, data=None, Normalize=True, arrsize=20):
+    def __init__(self, data=None, Normalize=True, Stack_Cluster=False, arrsize=20):
         self.data = data
         self.arrsize = arrsize
         self.Normalize = Normalize
+        self.Stack_Cluster = Stack_Cluster
         if self.Normalize:
             self.minData, self.maxData = load_Normalization_Data()
 
@@ -86,9 +87,13 @@ class ClusterDataset(utils.Dataset):
 
     # Function for merging the timing and energy information into one 'picture'
     def __GetCluster(self, ncell, modnum, row, col, energy, timing):
-        cluster_e = self.__ReconstructCluster(ncell, modnum, row, col, energy)
-        cluster_t = self.__ReconstructCluster(ncell, modnum, row, col, timing)
-        return np.stack([cluster_e, cluster_t], axis=0)
+        if self.Stack_Cluster:
+            cluster_e = self.__ReconstructCluster(ncell, modnum, row, col, energy)
+            cluster_t = self.__ReconstructCluster(ncell, modnum, row, col, timing)
+            return np.stack([cluster_e, cluster_t], axis=0)
+        else:
+            cluster_e = self.__ReconstructCluster(ncell, modnum, row, col, energy)
+            return return cluster_e.reshape((1, self.arrsize, self.arrsize))
 
     # One-hot encoding for the particle code
     def __ChangePID(self, PID):
@@ -158,12 +163,20 @@ class ClusterDataset(utils.Dataset):
         features = np.concatenate((_ClusterE, _ClusterPt, _ClusterM02,
                                   _ClusterM20, _ClusterDistFromVert))
 
+<<<<<<< HEAD
         labels = {"ClusterType": _ClusterType, "PartE": _PartE,
                   "PartPt": _PartPt, "PartEta": _PartEta,
                   "PartPhi": _PartPhi, "PartIsPrimary": _PartIsPrimary,
                   "PartPID": _PartPID}
+=======
+        #labels = { "ClusterType" : _ClusterType, "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
+    #              , "PartIsPrimary" : _PartIsPrimary, "PartPID" : _PartPID }
 
-        return (img, features, labels)
+        labels = np.array([_ClusterType, _PartE, _PartPt, _PartEta, _PartPhi, _PartIsPrimary, _PartPID])
+
+>>>>>>> prepared next training run without timing information
+
+        return img, features, labels
 
 
 # Implementation of pytorch dataset class, loads the full dataset
@@ -173,8 +186,12 @@ class ClusterDataset(utils.Dataset):
 class ClusterDataset_Full(utils.Dataset):
     """Cluster dataset."""
     # Initialize class and load data
+<<<<<<< HEAD
 
     def __init__(self, npz_file, Normalize=True, arrsize=20):
+=======
+    def __init__(self, npz_file, Normalize=True, Stack_Cluster=False, arrsize=20):
+>>>>>>> prepared next training run without timing information
         """
         Args:
             npz_file (string): Path to the npz file.
@@ -200,6 +217,7 @@ class ClusterDataset_Full(utils.Dataset):
         self.PartIsPrimary = self.data['PartIsPrimary']
         self.PartPID = self.data['PartPID']
         self.Normalize = Normalize
+        self.Stack_Cluster =  Stack_Cluster
         if self.Normalize:
             self.minData, self.maxData = load_Normalization_Data()
 
@@ -237,9 +255,13 @@ class ClusterDataset_Full(utils.Dataset):
 
     # Function for merging the timing and energy information into one 'picture'
     def __GetCluster(self, ncell, modnum, row, col, energy, timing):
-        cluster_e = self.__ReconstructCluster(ncell, modnum, row, col, energy)
-        cluster_t = self.__ReconstructCluster(ncell, modnum, row, col, timing)
-        return np.stack([cluster_e, cluster_t], axis=0)
+        if self.Stack_Cluster:
+            cluster_e = self.__ReconstructCluster(ncell, modnum, row, col, energy)
+            cluster_t = self.__ReconstructCluster(ncell, modnum, row, col, timing)
+            return np.stack([cluster_e, cluster_t], axis=0)
+        else:
+            cluster_e = self.__ReconstructCluster(ncell, modnum, row, col, energy)
+            return return cluster_e.reshape((1, self.arrsize, self.arrsize))
 
     # One-hot encoding for the particle code
     def __ChangePID(self, PID):
@@ -309,12 +331,19 @@ class ClusterDataset_Full(utils.Dataset):
         features = np.concatenate((_ClusterE, _ClusterPt, _ClusterM02,
                                   _ClusterM20, _ClusterDistFromVert))
 
+<<<<<<< HEAD
         labels = {"ClusterType": _ClusterType, "PartE": _PartE,
                   "PartPt": _PartPt, "PartEta": _PartEta,
                   "PartPhi": _PartPhi, "PartIsPrimary": _PartIsPrimary,
                   "PartPID": _PartPID}
+=======
+        #labels = { "ClusterType" : _ClusterType, "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
+    #              , "PartIsPrimary" : _PartIsPrimary, "PartPID" : _PartPID }
 
-        return (img, features, labels)
+        labels = np.array([_ClusterType, _PartE, _PartPt, _PartEta, _PartPhi, _PartIsPrimary, _PartPID])
+>>>>>>> prepared next training run without timing information
+
+        return img, features, labels
 
 # Add Instance Noise to training image, can improve training
 # https://arxiv.org/abs/1610.04490

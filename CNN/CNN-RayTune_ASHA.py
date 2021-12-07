@@ -24,8 +24,8 @@ from ray.tune.suggest.hyperopt import HyperOptSearch
 import ClassModule as cm
 
 
-###############################################################################
-########################### Run Configuratinos ################################
+################################################################################
+########################### Run Configuratinos #################################
 # Set the number CPUS that should be used per trial. The number
 # of concurrent trials is the minimum of 6 or the number of avlaible cores
 # divided by cpus_per_trial. For the search algorithm to function properly this
@@ -63,11 +63,11 @@ reduction_factor = 4
 num_random_trials = 16
 accumulation_steps = 2
 Use_Shared_Memory = True
-set_to_none = False
-pin_memory = False
-non_blocking = False
+set_to_none = True
+pin_memory = True
+non_blocking = True
 use_amp = False
-use_benchmark = False
+use_benchmark = True
 INSTANCE_NOISE = True
 ###############################################################################
 
@@ -96,7 +96,6 @@ if not torch.cuda.is_available():
 # The number of neurons per layer here has been made variable, so ray can
 # search for the optimal number. The number of channels in the feature
 # extraction layer could also be made variable e.g.
-
 
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1, kernel_size=3,
@@ -130,13 +129,12 @@ class ResidualBlock(nn.Module):
         x = nn.SiLU(True)(x)
         return x
 
-
 class CNN(nn.Module):
-    def __init__(self, l1, l2, l3, input_dim=(2, 20, 20), num_in_features=5):
+    def __init__(self, l1, l2, l3, input_dim=(1,20,20), num_in_features=5):
         super(CNN, self).__init__()
 
         self.block1 = nn.Sequential(
-            nn.Conv2d(2, 64, kernel_size=5, stride=1, padding=4, bias=False),
+            nn.Conv2d(1, 64, kernel_size=5, stride=1, padding=4, bias=False),
             nn.BatchNorm2d(64),
             nn.SiLU(True)
         )
@@ -242,16 +240,16 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
         scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     # Loop through the dataset
-    for batch, Data in enumerate(dataloader):
+    for batch, (Clusters, Features, Label) in enumerate(dataloader):
         if batch == max_batch_number:
             break
-        Features = Data[1].to(device, non_blocking=non_blocking)
-        Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
+        Features = Features.to(device, non_blocking=non_blocking)
+        Label = Label.to(device, non_blocking=non_blocking)
         if INSTANCE_NOISE:
-            Clusters = cm.add_instance_noise(Data[0])
+            Clusters = cm.add_instance_noise(Clusters)
             Clusters = Clusters.to(device, non_blocking=non_blocking)
         else:
-            Clusters = Data[0].to(device, non_blocking=non_blocking)
+            Clusters = Clusters.to(device, non_blocking=non_blocking)
 
         # prediction and loss
         # If GPU memory is to small one can run over several batches to mimic a
@@ -273,7 +271,7 @@ def train_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
                 optimizer.zero_grad(set_to_none=set_to_none)
         else:
             pred = model(Clusters, Features)
-            loss = loss_fn(pred, Label.long())
+            loss = loss_fn(pred, Label[:,6].long())
             loss = loss / accumulation_steps
             # Backpropagation
             loss.backward()
@@ -300,10 +298,10 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
     model.eval()
 
     with torch.no_grad():
-        for batch, Data in enumerate(dataloader):
-            Clusters = Data[0].to(device, non_blocking=non_blocking)
-            Features = Data[1].to(device, non_blocking=non_blocking)
-            Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
+        for batch, (Clusters, Features, Label) in enumerate(dataloader):
+            Clusters = Clusters.to(device, non_blocking=non_blocking)
+            Features = Features.to(device, non_blocking=non_blocking)
+            Label = Label.to(device, non_blocking=non_blocking)
 
             if torch.cuda.is_available():
                 with torch.cuda.amp.autocast(enabled=use_amp):
@@ -311,7 +309,7 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
                     loss = loss_fn(pred, Label.long())
             else:
                 pred = model(Clusters, Features)
-                loss = loss_fn(pred, Label.long())
+                loss = loss_fn(pred, Label[:,6].long())#.item()
 
             correct += (pred.argmax(1) == Label).sum().item()
             total += Label.size(0)
@@ -339,21 +337,19 @@ def test_accuracy(model, device="cpu"):
     # load the test dataset
     dataset_test = cm.load_data_test()
 
-    # get dataloader
-    dataloader_test = utils.DataLoader(dataset_test, batch_size=64,
-                                       shuffle=False,
-                                       num_workers=cpu_count()-1,
-                                       pin_memory=pin_memory)
+    #get dataloader
+    dataloader_test = utils.DataLoader(
+        dataset_test, batch_size=256, shuffle=False, num_workers=cpu_count()-1, pin_memory=pin_memory)
 
     correct = 0
     total = 0
     model.eval()
 
     with torch.no_grad():
-        for batch, Data in enumerate(dataloader_test):
-            Clusters = Data[0].to(device, non_blocking=non_blocking)
-            Features = Data[1].to(device, non_blocking=non_blocking)
-            Label = Data[2]["PartPID"].to(device, non_blocking=non_blocking)
+        for batch, (Clusters, Features, Label) in enumerate(dataloader_test):
+            Clusters = Clusters.to(device, non_blocking=non_blocking)
+            Features = Features.to(device, non_blocking=non_blocking)
+            Label = Label.to(device, non_blocking=non_blocking)
 
             if torch.cuda.is_available():
                 with torch.cuda.amp.autocast(enabled=use_amp):
@@ -362,7 +358,7 @@ def test_accuracy(model, device="cpu"):
                 pred = model(Clusters, Features)
 
             total += Label.size(0)
-            correct += (pred.argmax(1) == Label).sum().item()
+            correct += (pred.argmax(1) == Label[:,6]).sum().item()
 
     return correct / total
 
@@ -444,9 +440,9 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
 
     # Setup hyperparameter-space to search
     config = {
-        "l1": tune.qlograndint(500, 750, 2),
-        "l2": tune.qlograndint(125, 250, 2),
-        "l3": tune.qlograndint(9, 65, 2),
+        "l1": tune.qlograndint(750, 1000, 2), #(500, 1000, 2),
+        "l2": tune.qlograndint(125, 500, 2), #(250, 500, 2),
+        "l3": tune.qlograndint(9, 65, 2), #(50, 250, 2),
         "lr": tune.loguniform(1e-4, 1e0),
         "wd": tune.loguniform(1e-5, 1e-2),
         "batch_size": tune.choice([32, 64, 128, 256])
@@ -495,7 +491,9 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
         scheduler=scheduler,
         progress_reporter=reporter,
         checkpoint_score_attr="accuracy",
-        keep_checkpoints_num=2)
+        keep_checkpoints_num=2,
+        max_failures=4,
+        raise_on_failed_trial=False)
 
     # Find best trial and use it on the testset
     best_trial = result.get_best_trial("loss", "min", "last")
