@@ -163,18 +163,11 @@ class ClusterDataset(utils.Dataset):
         features = np.concatenate((_ClusterE, _ClusterPt, _ClusterM02,
                                   _ClusterM20, _ClusterDistFromVert))
 
-<<<<<<< HEAD
-        labels = {"ClusterType": _ClusterType, "PartE": _PartE,
-                  "PartPt": _PartPt, "PartEta": _PartEta,
-                  "PartPhi": _PartPhi, "PartIsPrimary": _PartIsPrimary,
-                  "PartPID": _PartPID}
-=======
         #labels = { "ClusterType" : _ClusterType, "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
     #              , "PartIsPrimary" : _PartIsPrimary, "PartPID" : _PartPID }
 
         labels = np.array([_ClusterType, _PartE, _PartPt, _PartEta, _PartPhi, _PartIsPrimary, _PartPID])
 
->>>>>>> prepared next training run without timing information
 
         return img, features, labels
 
@@ -186,12 +179,7 @@ class ClusterDataset(utils.Dataset):
 class ClusterDataset_Full(utils.Dataset):
     """Cluster dataset."""
     # Initialize class and load data
-<<<<<<< HEAD
-
-    def __init__(self, npz_file, Normalize=True, arrsize=20):
-=======
     def __init__(self, npz_file, Normalize=True, Stack_Cluster=False, arrsize=20):
->>>>>>> prepared next training run without timing information
         """
         Args:
             npz_file (string): Path to the npz file.
@@ -331,17 +319,10 @@ class ClusterDataset_Full(utils.Dataset):
         features = np.concatenate((_ClusterE, _ClusterPt, _ClusterM02,
                                   _ClusterM20, _ClusterDistFromVert))
 
-<<<<<<< HEAD
-        labels = {"ClusterType": _ClusterType, "PartE": _PartE,
-                  "PartPt": _PartPt, "PartEta": _PartEta,
-                  "PartPhi": _PartPhi, "PartIsPrimary": _PartIsPrimary,
-                  "PartPID": _PartPID}
-=======
         #labels = { "ClusterType" : _ClusterType, "PartE" : _PartE, "PartPt" : _PartPt, "PartEta" : _PartEta, "PartPhi" : _PartPhi
     #              , "PartIsPrimary" : _PartIsPrimary, "PartPID" : _PartPID }
 
         labels = np.array([_ClusterType, _PartE, _PartPt, _PartEta, _PartPhi, _PartIsPrimary, _PartPID])
->>>>>>> prepared next training run without timing information
 
         return img, features, labels
 
