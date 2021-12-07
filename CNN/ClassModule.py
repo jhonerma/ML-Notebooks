@@ -93,7 +93,7 @@ class ClusterDataset(utils.Dataset):
             return np.stack([cluster_e, cluster_t], axis=0)
         else:
             cluster_e = self.__ReconstructCluster(ncell, modnum, row, col, energy)
-            return return cluster_e.reshape((1, self.arrsize, self.arrsize))
+            return cluster_e.reshape((1, self.arrsize, self.arrsize))
 
     # One-hot encoding for the particle code
     def __ChangePID(self, PID):
@@ -205,7 +205,7 @@ class ClusterDataset_Full(utils.Dataset):
         self.PartIsPrimary = self.data['PartIsPrimary']
         self.PartPID = self.data['PartPID']
         self.Normalize = Normalize
-        self.Stack_Cluster =  Stack_Cluster
+        self.Stack_Cluster = Stack_Cluster
         if self.Normalize:
             self.minData, self.maxData = load_Normalization_Data()
 
@@ -249,7 +249,7 @@ class ClusterDataset_Full(utils.Dataset):
             return np.stack([cluster_e, cluster_t], axis=0)
         else:
             cluster_e = self.__ReconstructCluster(ncell, modnum, row, col, energy)
-            return return cluster_e.reshape((1, self.arrsize, self.arrsize))
+            return cluster_e.reshape((1, self.arrsize, self.arrsize))
 
     # One-hot encoding for the particle code
     def __ChangePID(self, PID):
