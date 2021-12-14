@@ -387,8 +387,8 @@ def train_model(config, data=None, checkpoint_dir=None):
             model = nn.DataParallel(model)
 
     print(f"Training started on device {device} with virtual batch_size"
-          f"{accumulation_steps * int(config['batch_size'])}"
-          f"(real batch_size {int(config['batch_size'])})")
+          f" {accumulation_steps * int(config['batch_size'])}"
+          f" (real batch_size {int(config['batch_size'])})")
 
     # send model to device
     model.to(device)
@@ -465,7 +465,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
     reporter = CLIReporter(
         parameter_columns = ["l1", "l2", "l3", "lr", "wd", "batch_size"],
         metric_columns = ["loss", "accuracy", "training_iteration"],
-        max_report_frequency = 60)
+        max_report_frequency = 300)
 
     # Get Current date and time for checkpoint folder
     timestr = strftime("%Y_%m_%d-%H:%M:%S")
