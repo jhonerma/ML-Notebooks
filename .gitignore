@@ -10,3 +10,4 @@ CNN/Templates/Ray_Results/*
 CNN/Templates/ml_template.tar.xz
 *.pyc
 CNN/Data/.data.lock
+*.log

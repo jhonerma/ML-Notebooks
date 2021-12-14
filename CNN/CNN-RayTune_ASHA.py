@@ -463,8 +463,9 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
 
     # Init the Reporter, used for printing the relevant informations
     reporter = CLIReporter(
-        parameter_columns=["l1", "l2", "l3", "lr", "wd", "batch_size"],
-        metric_columns=["loss", "accuracy", "training_iteration"])
+        parameter_columns = ["l1", "l2", "l3", "lr", "wd", "batch_size"],
+        metric_columns = ["loss", "accuracy", "training_iteration"],
+        max_report_frequency = 60)
 
     # Get Current date and time for checkpoint folder
     timestr = strftime("%Y_%m_%d-%H:%M:%S")
@@ -493,8 +494,7 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
         checkpoint_score_attr="accuracy",
         keep_checkpoints_num=2,
         max_failures=4,
-        raise_on_failed_trial=False,
-        log_to_file='./logfile.txt')
+        raise_on_failed_trial=False)
 
     # Find best trial and use it on the testset
     best_trial = result.get_best_trial("loss", "min", "last")
