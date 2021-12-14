@@ -311,7 +311,7 @@ def val_loop(epoch, dataloader, model, loss_fn, optimizer, device="cpu"):
                 pred = model(Clusters, Features)
                 loss = loss_fn(pred, Label[:,6].long())#.item()
 
-            correct += (pred.argmax(1) == Label).sum().item()
+            correct += (pred.argmax(1) == Label[:,6]).sum().item()
             total += Label.size(0)
             val_loss += loss.cpu().numpy()
             val_steps += 1
@@ -493,7 +493,8 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
         checkpoint_score_attr="accuracy",
         keep_checkpoints_num=2,
         max_failures=4,
-        raise_on_failed_trial=False)
+        raise_on_failed_trial=False,
+        log_to_file='./logfile.txt')
 
     # Find best trial and use it on the testset
     best_trial = result.get_best_trial("loss", "min", "last")
